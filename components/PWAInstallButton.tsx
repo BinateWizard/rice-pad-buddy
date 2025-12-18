@@ -13,13 +13,19 @@ export default function PWAInstallButton() {
   const [isInstalled, setIsInstalled] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
+    // Small delay to ensure proper mounting
+    const readyTimer = setTimeout(() => {
+      setIsReady(true);
+    }, 500);
+
     // Check if user previously dismissed the prompt (for this session only)
     const dismissed = sessionStorage.getItem('pwa-install-dismissed');
     if (dismissed) {
       setIsDismissed(true);
-      return;
+      return () => clearTimeout(readyTimer);
     }
 
     // Check if app is already installed (standalone mode)
@@ -29,7 +35,7 @@ export default function PWAInstallButton() {
     if (isStandalone || isIOSStandalone) {
       setIsInstalled(true);
       setShowButton(false);
-      return;
+      return () => clearTimeout(readyTimer);
     }
 
     // Listen for beforeinstallprompt event
@@ -51,6 +57,7 @@ export default function PWAInstallButton() {
     window.addEventListener('appinstalled', handleAppInstalled);
 
     return () => {
+      clearTimeout(readyTimer);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
@@ -81,41 +88,39 @@ export default function PWAInstallButton() {
     sessionStorage.setItem('pwa-install-dismissed', 'true');
   };
 
-  if (!showButton || isInstalled || isDismissed) {
+  if (!isReady || !showButton || isInstalled || isDismissed) {
     return null;
   }
 
   return (
-    <div className="fixed bottom-20 left-4 right-4 z-50 animate-modal-popup lg:hidden">
-      <div className="bg-white/95 backdrop-blur-lg rounded-2xl shadow-2xl border border-green-200 p-4 flex items-center gap-4">
+    <div className="fixed top-4 left-4 right-4 z-[80] animate-slide-down lg:hidden">
+      <div className="bg-white/95 backdrop-blur-lg rounded-2xl shadow-2xl border-2 border-green-300 p-4 flex items-center gap-3">
         <div className="flex-shrink-0">
-          <div className="h-14 w-14 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg">
-            <Smartphone className="h-7 w-7 text-white" />
+          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg">
+            <Smartphone className="h-6 w-6 text-white" />
           </div>
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 text-base" style={{ fontFamily: "'Courier New', Courier, monospace" }}>
-            Install PadBuddy
+          <h3 className="font-bold text-gray-900 text-sm" style={{ fontFamily: "'Courier New', Courier, monospace" }}>
+            Install PadBuddy App
           </h3>
-          <p className="text-xs text-gray-600">
+          <p className="text-xs text-gray-600 truncate">
             I-install para mas mabilis at offline access!
           </p>
         </div>
-        <div className="flex flex-col gap-2 flex-shrink-0">
-          <button
-            onClick={handleInstallClick}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95"
-            style={{ fontFamily: "'Courier New', Courier, monospace" }}
-          >
-            <Download className="h-4 w-4" />
-            Install
-          </button>
-        </div>
+        <button
+          onClick={handleInstallClick}
+          className="flex-shrink-0 flex items-center justify-center gap-1.5 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white text-xs font-bold px-3 py-2.5 rounded-xl shadow-lg transition-all active:scale-95"
+          style={{ fontFamily: "'Courier New', Courier, monospace" }}
+        >
+          <Download className="h-4 w-4" />
+          Install
+        </button>
         <button
           onClick={handleDismiss}
-          className="absolute -top-2 -right-2 p-1.5 rounded-full bg-white shadow-lg hover:bg-gray-100 transition-all border border-gray-200"
+          className="flex-shrink-0 p-1.5 rounded-full hover:bg-gray-100 transition-all"
         >
-          <X className="h-4 w-4 text-gray-500" />
+          <X className="h-5 w-5 text-gray-400" />
         </button>
       </div>
     </div>

@@ -1,18 +1,35 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
 
 export default function PageLoader() {
   const [loading, setLoading] = useState(false);
   const pathname = usePathname();
+  const isFirstLoad = useRef(true);
+  const previousPathname = useRef<string | null>(null);
 
   useEffect(() => {
+    // Skip loader on first mount (PWA initial load) - let the page render naturally
+    if (isFirstLoad.current) {
+      isFirstLoad.current = false;
+      previousPathname.current = pathname;
+      return;
+    }
+
+    // Only show loader when pathname actually changes (navigation)
+    if (previousPathname.current === pathname) {
+      return;
+    }
+
+    previousPathname.current = pathname;
     setLoading(true);
+    
+    // Short timeout for smooth navigation feel
     const timer = setTimeout(() => {
       setLoading(false);
-    }, 500);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [pathname]);

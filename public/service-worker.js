@@ -1,6 +1,6 @@
-const CACHE_NAME = 'padbuddy-v2';
-const STATIC_CACHE = 'padbuddy-static-v2';
-const DYNAMIC_CACHE = 'padbuddy-dynamic-v2';
+const CACHE_NAME = 'padbuddy-v3';
+const STATIC_CACHE = 'padbuddy-static-v3';
+const DYNAMIC_CACHE = 'padbuddy-dynamic-v3';
 
 // Static assets to cache immediately on install
 const STATIC_ASSETS = [
@@ -146,6 +146,45 @@ async function networkFirst(request) {
   }
 }
 
+// Network First Navigation Strategy (for page loads)
+// This ensures PWA cold starts get fresh content
+async function networkFirstNavigation(request) {
+  try {
+    // Try network first with a timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+    
+    const networkResponse = await fetch(request, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
+    if (networkResponse.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, networkResponse.clone());
+    }
+    return networkResponse;
+  } catch (error) {
+    console.log('[SW] Navigation network failed, trying cache:', error);
+    
+    // Try to get from cache
+    const cachedResponse = await caches.match(request);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+    
+    // If no cache, try to return the offline page
+    const offlinePage = await caches.match('/offline.html');
+    if (offlinePage) {
+      return offlinePage;
+    }
+    
+    // Last resort - return a basic offline response
+    return new Response(
+      '<!DOCTYPE html><html><head><title>Offline</title></head><body><h1>Offline</h1><p>Please check your connection.</p></body></html>',
+      { headers: { 'Content-Type': 'text/html' }, status: 503 }
+    );
+  }
+}
+
 // Stale While Revalidate Strategy
 async function staleWhileRevalidate(request) {
   const cache = await caches.open(CACHE_NAME);
@@ -219,6 +258,13 @@ self.addEventListener('fetch', (event) => {
   
   // Skip external requests (any other external origin)
   if (url.origin !== location.origin) {
+    return;
+  }
+  
+  // IMPORTANT: Use network-first for navigation requests (page loads)
+  // This ensures PWA always gets the latest HTML on launch
+  if (request.mode === 'navigate') {
+    event.respondWith(networkFirstNavigation(request));
     return;
   }
   

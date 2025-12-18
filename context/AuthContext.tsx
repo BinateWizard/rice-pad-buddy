@@ -31,13 +31,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
+    // Set a timeout to prevent infinite loading in PWA mode
+    const timeout = setTimeout(() => {
+      if (loading) {
+        console.log('[Auth] Timeout reached, stopping loading state');
+        setLoading(false);
+      }
+    }, 5000); // 5 second max wait for auth
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('[Auth] State changed:', user ? 'logged in' : 'logged out');
       setUser(user);
       setLoading(false);
+      clearTimeout(timeout);
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
+  }, [loading]);
 
   const signOut = async () => {
     try {
