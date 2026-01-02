@@ -89,58 +89,46 @@ async function performDeviceAction(deviceId: string, command: string, fetchResul
   }
 }
 
-export default function ControlPanelTab() {
+interface ControlPanelTabProps {
+  paddies?: any[];
+  fieldId?: string;
+  deviceReadings?: any[];
+}
+
+export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings = [] }: ControlPanelTabProps) {
   const [activeTab, setActiveTab] = useState(0);
-
-
-  // Device IDs for ESP32 A, B, C
-  // Device/module mapping
-  const devices = [
-    {
-      id: 'DEVICE_0001',
-      label: 'ESP32 A',
-      modules: [
-        { key: 'relay', label: '4-Channel Relay' },
-      ],
-    },
-    {
-      id: 'DEVICE_0002',
-      label: 'ESP32 B',
-      modules: [
-        { key: 'gps', label: 'GPS Module' },
-        { key: 'motor', label: 'Motor Controller' },
-      ],
-    },
-    {
-      id: 'DEVICE_0003',
-      label: 'ESP32 C',
-      modules: [
-        { key: 'npk', label: 'NPK Sensor (RS485)' },
-      ],
-    },
-  ];
-
   const [deviceData, setDeviceData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
-      const results = await Promise.all(
-        devices.map(async (dev) => {
-          const [status, gps, npk] = await Promise.all([
-            getDeviceStatus(dev.id),
-            getDeviceGPS(dev.id),
-            getDeviceNPK(dev.id),
-          ]);
-          return { id: dev.id, label: dev.label, status, gps, npk };
-        })
-      );
-      setDeviceData(results);
+      if (paddies.length > 0) {
+        // Fetch data for each paddy's device
+        const results = await Promise.all(
+          paddies.map(async (paddy) => {
+            const [status, gps, npk] = await Promise.all([
+              getDeviceStatus(paddy.deviceId),
+              getDeviceGPS(paddy.deviceId),
+              getDeviceNPK(paddy.deviceId),
+            ]);
+            return { 
+              id: paddy.deviceId, 
+              label: paddy.name || `Paddy ${paddy.id}`,
+              paddyId: paddy.id,
+              paddyName: paddy.name,
+              status, 
+              gps, 
+              npk 
+            };
+          })
+        );
+        setDeviceData(results);
+      }
       setLoading(false);
     }
     if (activeTab === 0) fetchAll();
-  }, [activeTab]);
+  }, [activeTab, paddies]);
 
   
 
@@ -154,89 +142,93 @@ export default function ControlPanelTab() {
           {activeTab === 0 ? (
             loading ? (
               <div className="text-black text-center">Loading status...</div>
+            ) : paddies.length === 0 ? (
+              <div className="text-black text-center py-8">
+                <p>No paddies in this field.</p>
+                <p className="text-sm text-gray-600 mt-2">Add a paddy to see device status here.</p>
+              </div>
             ) : (
               <div className="space-y-8">
-                {deviceData.map((dev: any, idx: number) => (
+                {deviceData.map((dev: any) => (
                   <div key={dev.id} className="mb-6">
-                       <div className="flex items-center gap-4 mb-2">
+                    <div className="flex items-center gap-4 mb-4">
                       <span className={`inline-block w-3 h-3 rounded-full ${dev.status?.color === 'green' ? 'bg-green-500' : dev.status?.color === 'yellow' ? 'bg-yellow-400' : 'bg-red-500'}`}></span>
-                      <span className="font-bold text-lg text-black bg-white px-2 py-0.5 rounded">{dev.label}</span>
+                      <span className="font-bold text-lg text-black bg-white px-2 py-0.5 rounded">{dev.paddyName || `Paddy ${dev.paddyId}`}</span>
                       <span className="ml-2 px-2 py-0.5 rounded text-xs font-semibold bg-gray-100 text-black">{dev.status?.badge || 'Unknown'}</span>
-                      <span className="ml-auto text-sm text-black">Last seen: {dev.status?.lastUpdate || 'Never'}</span>
+                      <span className="ml-auto text-sm text-black">Device: {dev.id}</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                      {devices[idx].modules.map((mod: any) => {
-                        if (mod.key === 'relay') {
-                          return (
-                            <div key={mod.key} className="p-4 rounded-xl border-transparent bg-white">
-                              <div className="font-semibold mb-1 text-black">{mod.label}</div>
-                              <div className="text-sm text-black">Status: <span className="font-mono">(not implemented)</span></div>
-                              <div className="text-xs text-black mt-1">(Add relay status fetch here)</div>
-                            </div>
-                          );
-                        }
-                        if (mod.key === 'gps') {
-                          return (
-                            <div key={mod.key} className="p-4 rounded-xl border-transparent bg-white">
-                              <div className="font-semibold mb-1 text-black">{mod.label}</div>
-                              <div className="text-sm text-black">{dev.gps?.lat && dev.gps?.lng ? `Lat: ${dev.gps.lat}, Lng: ${dev.gps.lng}` : 'No data'}</div>
-                              <div className="text-xs text-black mt-1">Last update: {formatTimeAgo(dev.gps?.ts)}</div>
-                            </div>
-                          );
-                        }
-                        if (mod.key === 'motor') {
-                          return (
-                            <div key={mod.key} className="p-4 rounded-xl border-transparent bg-white">
-                              <div className="font-semibold mb-1 text-black">{mod.label}</div>
-                              <div className="text-sm text-black">Last action: <span className="font-mono">(not implemented)</span></div>
-                              <div className="text-xs text-black mt-1">(Add motor action log fetch here)</div>
-                            </div>
-                          );
-                        }
-                        if (mod.key === 'npk') {
-                          return (
-                            <div key={mod.key} className="p-4 rounded-xl border-transparent bg-white">
-                              <div className="font-semibold mb-1 text-black">{mod.label}</div>
-                              <div className="text-sm text-black">{dev.npk ? `N: ${dev.npk.n ?? '-'} | P: ${dev.npk.p ?? '-'} | K: ${dev.npk.k ?? '-'}` : 'No data'}</div>
-                              <div className="text-xs text-black mt-1">Last reading: {formatTimeAgo(dev.npk?.timestamp)}</div>
-                            </div>
-                          );
-                        }
-                        return null;
-                      })}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* NPK Reading Card */}
+                      <div className="p-4 rounded-xl border-2 border-gray-200 bg-white">
+                        <div className="font-semibold mb-2 text-black">NPK Sensor</div>
+                        {dev.npk ? (
+                          <div className="space-y-1">
+                            <div className="text-sm text-black">N: <span className="font-bold text-blue-600">{dev.npk.n ?? '-'}</span></div>
+                            <div className="text-sm text-black">P: <span className="font-bold text-purple-600">{dev.npk.p ?? '-'}</span></div>
+                            <div className="text-sm text-black">K: <span className="font-bold text-orange-600">{dev.npk.k ?? '-'}</span></div>
+                            <div className="text-xs text-gray-600 mt-1">Last: {formatTimeAgo(dev.npk?.timestamp)}</div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-600">No data</div>
+                        )}
+                      </div>
+
+                      {/* GPS Card */}
+                      <div className="p-4 rounded-xl border-2 border-gray-200 bg-white">
+                        <div className="font-semibold mb-2 text-black">GPS Location</div>
+                        {dev.gps?.lat && dev.gps?.lng ? (
+                          <div className="space-y-1">
+                            <div className="text-xs text-black font-mono">{dev.gps.lat.toFixed(6)}</div>
+                            <div className="text-xs text-black font-mono">{dev.gps.lng.toFixed(6)}</div>
+                            <div className="text-xs text-gray-600 mt-1">Last: {formatTimeAgo(dev.gps?.ts)}</div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-600">No data</div>
+                        )}
+                      </div>
+
+                      {/* Device Info Card */}
+                      <div className="p-4 rounded-xl border-2 border-gray-200 bg-white">
+                        <div className="font-semibold mb-2 text-black">Device Info</div>
+                        <div className="space-y-1">
+                          <div className="text-xs text-black">ID: <span className="font-mono">{dev.id}</span></div>
+                          <div className="text-xs text-black">Status: <span className="font-semibold">{dev.status?.badge}</span></div>
+                          {dev.status?.lastUpdate && (
+                            <div className="text-xs text-gray-600 mt-1">Last: {dev.status.lastUpdate}</div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
             )
-          ) : (
-            // Controls tab
-            TABS[activeTab].label === 'Controls' ? (
-              <div className="space-y-8">
-                {/* Relay Controls */}
-                <div className="p-4 rounded-lg border-transparent bg-gray-50">
-                  <div className="font-semibold mb-3">Relays</div>
-                  <RelayControls deviceId={devices[0].id} deviceCount={deviceData.length} />
+          ) : TABS[activeTab].label === 'Controls' ? (
+              paddies.length === 0 ? (
+                <div className="text-black text-center py-8">
+                  <p>No paddies connected to this field.</p>
+                  <p className="text-sm text-gray-600 mt-2">Add a paddy first to control relays and devices.</p>
                 </div>
-
-                {/* Motor Controller */}
-                <div className="p-4 rounded-lg border-transparent bg-gray-50">
-                  <div className="font-semibold mb-3">Motor Controller</div>
-                  <MotorControls deviceId={devices[1].id} />
+              ) : (
+                <div className="space-y-8">
+                  {/* Relay Controls - Per Paddy */}
+                  <div className="p-4 rounded-lg border-transparent bg-gray-50">
+                    <div className="font-semibold mb-4 text-black">Relay Control by Paddy</div>
+                    <div className="space-y-4">
+                      {deviceData.map((dev) => (
+                        <div key={dev.paddyId} className="border-2 border-gray-300 rounded-lg p-4 bg-white">
+                          <div className="flex items-center gap-3 mb-3">
+                            <span className={`inline-block w-3 h-3 rounded-full ${dev.status?.color === 'green' ? 'bg-green-500' : dev.status?.color === 'yellow' ? 'bg-yellow-400' : 'bg-red-500'}`}></span>
+                            <span className="font-bold text-black">{dev.paddyName || `Paddy ${dev.paddyId}`}</span>
+                            <span className="text-xs font-semibold px-2 py-1 rounded bg-gray-100 text-black">{dev.status?.badge || 'Unknown'}</span>
+                          </div>
+                          <RelayControlsPerDevice deviceId={dev.id} paddyName={dev.paddyName} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-
-                {/* NPK Sensor */}
-                <div className="p-4 rounded-lg border-transparent bg-gray-50">
-                  <div className="font-semibold mb-3">NPK Sensor</div>
-                  <NPKControls deviceId={devices[2].id} />
-                </div>
-
-                {/* GPS Module */}
-                <div className="p-4 rounded-lg border-transparent bg-gray-50">
-                  <div className="font-semibold mb-3">GPS Module</div>
-                  <GPSControls deviceId={devices[1].id} />
-                </div>
-              </div>
+              )
             ) : (
               <div className="text-black text-center">
                 {TABS[activeTab].label === 'Logs/History' && (
@@ -253,7 +245,7 @@ export default function ControlPanelTab() {
                 )}
               </div>
             )
-          )}
+          }
         </div>
       </div>
     </div>
@@ -280,6 +272,135 @@ function TabBar({ activeTab, setActiveTab }: { activeTab: number; setActiveTab: 
           {tab.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// RelayControlsPerDevice - Per-paddy relay control with device-level loading states
+function RelayControlsPerDevice({ deviceId, paddyName }: { deviceId: string; paddyName?: string }) {
+  const [selectedRelays, setSelectedRelays] = useState<Set<number>>(new Set([0, 1, 2, 3]));
+  const [relayStates, setRelayStates] = useState([false, false, false, false]);
+  const [loadingRelays, setLoadingRelays] = useState<Set<number>>(new Set());
+  const [messages, setMessages] = useState<Record<number, string>>({});
+
+  const toggleRelay = async (index: number) => {
+    if (loadingRelays.has(index) || !selectedRelays.has(index)) return;
+
+    const prev = [...relayStates];
+    const next = [...relayStates];
+    next[index] = !next[index];
+    
+    setRelayStates(next);
+    setLoadingRelays(prev => new Set([...prev, index]));
+    setMessages({ ...messages, [index]: 'Sending...' });
+
+    const cmd = `relay:${index + 1}:${next[index] ? 'on' : 'off'}`;
+    try {
+      const res = await performDeviceAction(deviceId, cmd, async () => {
+        return await getDeviceStatus(deviceId);
+      });
+
+      if (res.acknowledged) {
+        if (res.completed) {
+          setMessages({ ...messages, [index]: next[index] ? '✓ ON' : '✓ OFF' });
+        } else {
+          setMessages({ ...messages, [index]: next[index] ? '⚠ Ack (incomplete)' : '⚠ Ack (incomplete)' });
+        }
+      } else {
+        setMessages({ ...messages, [index]: '✗ No ack' });
+        setRelayStates(prev); // revert
+      }
+
+      setTimeout(() => setMessages(m => { delete m[index]; return { ...m }; }), 3000);
+    } catch (e) {
+      console.error(e);
+      setRelayStates(prev); // revert
+      setMessages({ ...messages, [index]: `✗ Failed` });
+      setTimeout(() => setMessages(m => { delete m[index]; return { ...m }; }), 3000);
+    } finally {
+      setLoadingRelays(prev => {
+        const next = new Set(prev);
+        next.delete(index);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Device Selection Checkboxes */}
+      <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
+        <div className="text-sm font-medium text-black mb-2">Select relays to control:</div>
+        <div className="grid grid-cols-4 gap-2">
+          {[0, 1, 2, 3].map((i) => (
+            <label key={i} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-white transition-colors">
+              <input
+                type="checkbox"
+                checked={selectedRelays.has(i)}
+                onChange={(e) => {
+                  const next = new Set(selectedRelays);
+                  if (e.target.checked) next.add(i);
+                  else next.delete(i);
+                  setSelectedRelays(next);
+                }}
+                className="w-4 h-4"
+              />
+              <span className="text-xs text-black font-medium">Relay {i + 1}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Relay Controls Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className={`p-3 rounded-lg border-2 flex flex-col items-center justify-center transition-all ${
+              selectedRelays.has(i)
+                ? relayStates[i]
+                  ? 'border-red-400 bg-red-50'
+                  : 'border-green-400 bg-green-50'
+                : 'border-gray-300 bg-gray-100 opacity-50'
+            }`}
+          >
+            <div className="text-sm font-bold text-black mb-2">Relay {i + 1}</div>
+            
+            {loadingRelays.has(i) && (
+              <div className="flex flex-col items-center gap-1 mb-2">
+                <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                <div className="text-xs text-blue-600 font-medium">Sending...</div>
+              </div>
+            )}
+            
+            {messages[i] && (
+              <div className="text-xs font-medium text-center text-gray-700 mb-2">
+                {messages[i]}
+              </div>
+            )}
+
+            <div className="text-xs font-semibold text-black mb-3">
+              {loadingRelays.has(i) ? 'Wait...' : (relayStates[i] ? 'ON' : 'OFF')}
+            </div>
+
+            <button
+              onClick={() => toggleRelay(i)}
+              disabled={!selectedRelays.has(i) || loadingRelays.has(i)}
+              className={`w-full py-2 px-2 rounded-md font-bold text-xs transition-all ${
+                !selectedRelays.has(i)
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : loadingRelays.has(i)
+                    ? 'bg-gray-400 text-white cursor-wait'
+                    : relayStates[i]
+                      ? 'bg-red-600 hover:bg-red-700 text-white'
+                      : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+            >
+              {loadingRelays.has(i) ? '...' : (relayStates[i] ? 'Turn Off' : 'Turn On')}
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

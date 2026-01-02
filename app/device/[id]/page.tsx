@@ -251,16 +251,16 @@ export default function DeviceDetail() {
     // Auto-log NPK readings if available
     (async () => {
       const { autoLogReadings } = await import('@/lib/utils/sensorLogging');
-      if (liveNPK.data.n !== undefined || liveNPK.data.p !== undefined || liveNPK.data.k !== undefined) {
+      if (paddyLiveData.data && (paddyLiveData.data.nitrogen !== undefined || paddyLiveData.data.phosphorus !== undefined || paddyLiveData.data.potassium !== undefined)) {
         await autoLogReadings(user.uid, fieldInfo.id, paddyInfo.id, {
-          n: liveNPK.data.n,
-          p: liveNPK.data.p,
-          k: liveNPK.data.k,
-          timestamp: liveNPK.data.timestamp,
+          n: paddyLiveData.data.nitrogen,
+          p: paddyLiveData.data.phosphorus,
+          k: paddyLiveData.data.potassium,
+          timestamp: paddyLiveData.data.timestamp?.getTime(),
         });
       }
     })();
-  }, [liveNPK.data, user, paddyInfo, fieldInfo, deviceId]);
+  }, [paddyLiveData.data, user, paddyInfo, fieldInfo, deviceId]);
 
   // Real-time RTDB listener for live chart updates
   useEffect(() => {
@@ -720,7 +720,7 @@ export default function DeviceDetail() {
                   <span className="text-lg">🧪</span>
                 </div>
                 <p className="text-xl font-bold text-gray-900">
-                  {liveNPK.data?.n !== undefined ? Math.round(liveNPK.data.n) : '--'}
+                  {paddyLiveData.data?.nitrogen !== undefined ? Math.round(paddyLiveData.data.nitrogen) : '--'}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">mg/kg</p>
               </div>
@@ -730,7 +730,7 @@ export default function DeviceDetail() {
                   <span className="text-lg">⚗️</span>
                 </div>
                 <p className="text-xl font-bold text-gray-900">
-                  {liveNPK.data?.p !== undefined ? Math.round(liveNPK.data.p) : '--'}
+                  {paddyLiveData.data?.phosphorus !== undefined ? Math.round(paddyLiveData.data.phosphorus) : '--'}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">mg/kg</p>
               </div>
@@ -740,7 +740,7 @@ export default function DeviceDetail() {
                   <span className="text-lg">🔬</span>
                 </div>
                 <p className="text-xl font-bold text-gray-900">
-                  {liveNPK.data?.k !== undefined ? Math.round(liveNPK.data.k) : '--'}
+                  {paddyLiveData.data?.potassium !== undefined ? Math.round(paddyLiveData.data.potassium) : '--'}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">mg/kg</p>
               </div>
@@ -790,7 +790,7 @@ export default function DeviceDetail() {
               fieldId={fieldInfo.id}
               paddyId={paddyInfo.id}
               deviceId={deviceId}
-              currentNPK={liveNPK.data}
+              currentNPK={paddyLiveData.data ? { n: paddyLiveData.data.nitrogen, p: paddyLiveData.data.phosphorus, k: paddyLiveData.data.potassium, timestamp: paddyLiveData.data.timestamp?.getTime() } : undefined}
             />
           )}
 

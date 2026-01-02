@@ -594,7 +594,10 @@ export default function FieldDetail() {
                 activeTab === 'paddies' ? 'bg-emerald-600' : 'bg-transparent'
               }`} />
               <svg className={`w-6 h-6 transition-transform duration-300 ${activeTab === 'paddies' ? 'scale-110' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={activeTab === 'paddies' ? 2 : 1.5} d="M12 2c4 0 7 3 7 7a7 7 0 11-14 0c0-4 3-7 7-7zM5 20c1.5-2 4-3 7-3s5.5 1 7 3" />
+                <rect x="3" y="3" width="7" height="7" strokeLinecap="round" strokeLinejoin="round" strokeWidth={activeTab === 'paddies' ? 2 : 1.5} />
+                <rect x="14" y="3" width="7" height="7" strokeLinecap="round" strokeLinejoin="round" strokeWidth={activeTab === 'paddies' ? 2 : 1.5} />
+                <rect x="3" y="14" width="7" height="7" strokeLinecap="round" strokeLinejoin="round" strokeWidth={activeTab === 'paddies' ? 2 : 1.5} />
+                <rect x="14" y="14" width="7" height="7" strokeLinecap="round" strokeLinejoin="round" strokeWidth={activeTab === 'paddies' ? 2 : 1.5} />
               </svg>
               <span className={`text-[10px] font-semibold mt-0.5 transition-all duration-300 ${
                 activeTab === 'paddies' ? 'opacity-100' : 'opacity-0 h-0'
@@ -745,7 +748,7 @@ export default function FieldDetail() {
                 : 'opacity-0 translate-y-4 absolute inset-0 pointer-events-none'
             }`}>
               {activeTab === 'control-panel' && (
-                <ControlPanelTab />
+                <ControlPanelTab paddies={paddies} fieldId={fieldId} deviceReadings={deviceReadings} />
               )}
             </div>
           </div>
