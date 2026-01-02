@@ -28,6 +28,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Menu, Home as HomeIcon, BookOpen, HelpCircle, Info, LogOut, Shield } from "lucide-react";
 import { usePageVisibility } from "@/lib/hooks/usePageVisibility";
+import { usePaddyLiveData } from "@/lib/hooks/usePaddyLiveData";
+import { useDeviceMonitoring } from "@/lib/hooks/useDeviceMonitoring";
 
 // Admin email for access control
 const ADMIN_EMAIL = 'ricepaddy.contact@gmail.com';
@@ -66,9 +68,8 @@ export default function DeviceDetail() {
   const [paddyNameValue, setPaddyNameValue] = useState('');
   const [isSavingPaddyName, setIsSavingPaddyName] = useState(false);
 
-  // Import and use live NPK hook
-  const { useLiveNPK } = require('@/lib/hooks/useLiveNPK');
-  const liveNPK = useLiveNPK(deviceId);
+  // Live NPK data from Firestore logs (populated by Cloud Functions)
+  const paddyLiveData = usePaddyLiveData(user?.uid ?? null, fieldInfo?.id ?? null, paddyInfo?.id ?? null);
 
   // Fetch temperature and humidity data (from device sensors or weather API)
   useEffect(() => {
@@ -230,17 +231,22 @@ export default function DeviceDetail() {
     return () => clearInterval(interval);
   }, [deviceId]);
 
-  // Sync live data to state and auto-log
+  // Sync live data from Firestore to state
   useEffect(() => {
-    if (!liveNPK.data || !user || !paddyInfo || !fieldInfo) return;
+    if (!paddyLiveData.data || !user || !paddyInfo || !fieldInfo) return;
 
     setDeviceInfo((prev: any) => ({
       ...prev,
-      npk: liveNPK.data,
-      status: liveNPK.online ? 'connected' : 'disconnected',
+      npk: {
+        n: paddyLiveData.data!.nitrogen,
+        p: paddyLiveData.data!.phosphorus,
+        k: paddyLiveData.data!.potassium,
+        timestamp: paddyLiveData.data!.timestamp?.getTime(),
+      },
+      status: 'connected',
       connectedAt: new Date().toISOString(),
     }));
-    setDeviceReadings([{ deviceId, npk: liveNPK.data, status: liveNPK.online ? 'connected' : 'disconnected' }]);
+    setDeviceReadings([{ deviceId, npk: paddyLiveData.data, status: 'connected' }]);
 
     // Auto-log NPK readings if available
     (async () => {
@@ -297,7 +303,9 @@ export default function DeviceDetail() {
     });
 
     return () => unsubscribe();
-  }, [deviceId]);
+  }, [user, paddyInfo, fieldInfo, deviceId]);
+
+  // Real-time Firestore listener for paddy logs (historical + real-time)
   useEffect(() => {
     if (!user || !paddyInfo || !fieldInfo) return;
     setIsLoadingLogs(true);
@@ -311,30 +319,7 @@ export default function DeviceDetail() {
       case 'all': startDate = new Date(0); break;
     }
 
-    // Keep latest snapshots for merge/dedupe
-    let latestPaddy: any[] = [];
-    let latestDevice: any[] = [];
-
-    const mergeAndSet = () => {
-      const merged = [...latestPaddy, ...latestDevice].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      const deduped: any[] = [];
-      const seen = new Set<string>();
-      for (const log of merged) {
-        // Use document ID if available, otherwise use a combination of timestamp, values, and source
-        // This ensures we don't lose legitimate readings that might have similar timestamps
-        const key = log.id 
-          ? `${log._src || 'unknown'}-${log.id}` 
-          : `${log._src || 'unknown'}-${log.timestamp.getTime()}-${log.nitrogen ?? ''}-${log.phosphorus ?? ''}-${log.potassium ?? ''}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          deduped.push(log);
-        }
-      }
-      setHistoricalLogs(deduped);
-      setIsLoadingLogs(false);
-    };
-
-    // Primary: paddy logs listener
+    // Listen to paddy logs from Firestore (single source of truth)
     const paddyRef = collection(db, `users/${user.uid}/fields/${fieldInfo.id}/paddies/${paddyInfo.id}/logs`);
     const pq = timeRange === 'all' ? paddyRef : query(paddyRef, where('timestamp', '>=', startDate));
     const unsubPaddy = onSnapshot(pq, (snapshot) => {
@@ -343,90 +328,79 @@ export default function DeviceDetail() {
         const data: any = doc.data();
         const logDate = data.timestamp?.toDate?.() || new Date(data.timestamp);
         if (logDate >= startDate) {
-          arr.push({ ...data, id: doc.id, timestamp: logDate, _src: 'paddy' });
+          arr.push({ ...data, id: doc.id, timestamp: logDate, _src: 'firestore' });
         }
       });
-      latestPaddy = arr;
-      mergeAndSet();
+      const sorted = arr.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      setHistoricalLogs(sorted);
+      setIsLoadingLogs(false);
     }, (err) => {
       console.error('Paddy logs listener error:', err);
-    });
-
-    // Fallback: device logs listener
-    const deviceRef = collection(db, `deviceLogs/${deviceId}/readings`);
-    const dq = timeRange === 'all' ? deviceRef : query(deviceRef, where('timestamp', '>=', startDate));
-    const unsubDevice = onSnapshot(dq, (snapshot) => {
-      const arr: any[] = [];
-      snapshot.forEach((doc) => {
-        const data: any = doc.data();
-        const logDate = data.timestamp?.toDate?.() || new Date(data.timestamp);
-        if (logDate >= startDate) {
-          arr.push({ ...data, id: doc.id, timestamp: logDate, _src: 'device' });
-        }
-      });
-      latestDevice = arr;
-      mergeAndSet();
-    }, (err) => {
-      console.error('Device logs listener error:', err);
+      setIsLoadingLogs(false);
     });
 
     return () => {
       try { unsubPaddy(); } catch {}
-      try { unsubDevice(); } catch {}
     };
-  }, [user, paddyInfo, fieldInfo, timeRange, deviceId]);
+  }, [user, paddyInfo, fieldInfo, timeRange]);
 
   // Reset to page 1 when time range changes
   useEffect(() => {
     setCurrentPage(1);
   }, [timeRange]);
     
-  // Get device status - use liveNPK directly from RTDB
+  // Get device status - use paddyLiveData from Firestore
   const getDeviceStatusDisplay = () => {
-    const isOnline = liveNPK.online;
-    const hasNPK = liveNPK.data && (
-      liveNPK.data.n !== undefined || 
-      liveNPK.data.p !== undefined || 
-      liveNPK.data.k !== undefined
+    const hasNPK = paddyLiveData.data && (
+      paddyLiveData.data.nitrogen !== undefined || 
+      paddyLiveData.data.phosphorus !== undefined || 
+      paddyLiveData.data.potassium !== undefined
     );
     
-    if (liveNPK.loading) {
+    if (paddyLiveData.loading) {
       return {
         status: 'loading',
-        message: 'Connecting to device...',
+        message: 'Loading latest sensor data...',
         color: 'gray',
         badge: 'Loading',
-        lastUpdate: 'Connecting...'
+        lastUpdate: 'Loading...'
       };
     }
     
-    if (!liveNPK.data && !isOnline) {
+    // Check if data is recent (within last 15 minutes)
+    const isRecent = paddyLiveData.data?.timestamp && 
+      (Date.now() - paddyLiveData.data.timestamp.getTime()) < 15 * 60 * 1000;
+    
+    if (!paddyLiveData.data) {
       return {
         status: 'offline',
-        message: 'Device not found or offline.',
+        message: 'Device is offline. No data received. Check power and network connection.',
         color: 'red',
         badge: 'Offline',
-        lastUpdate: 'No connection'
+        lastUpdate: 'No data'
       };
     }
     
-    if (!isOnline) {
+    if (!isRecent) {
+      const lastSeen = paddyLiveData.data.timestamp 
+        ? paddyLiveData.data.timestamp.toLocaleString() 
+        : 'Unknown';
       return {
         status: 'offline',
-        message: 'Device is offline. Check power and network connection.',
+        message: `Device offline. Last seen: ${lastSeen}`,
         color: 'red',
         badge: 'Offline',
-        lastUpdate: 'No connection'
+        lastUpdate: lastSeen
       };
     }
     
-    if (isOnline && !hasNPK) {
+    if (!hasNPK) {
       return {
         status: 'sensor-issue',
         message: 'Device connected but sensor readings unavailable. Check sensor connections.',
         color: 'yellow',
         badge: 'Sensor Issue',
-        lastUpdate: 'Just now'
+        lastUpdate: paddyLiveData.data.timestamp ? paddyLiveData.data.timestamp.toLocaleTimeString() : 'Recently'
       };
     }
     
@@ -435,7 +409,7 @@ export default function DeviceDetail() {
       message: 'All systems operational',
       color: 'green',
       badge: 'Connected',
-      lastUpdate: 'Just now'
+      lastUpdate: paddyLiveData.data.timestamp ? paddyLiveData.data.timestamp.toLocaleTimeString() : 'Just now'
     };
   };
   
