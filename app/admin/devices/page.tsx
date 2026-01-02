@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { db, database } from '@/lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { ref, get } from 'firebase/database';
+import { getDeviceData } from '@/lib/utils/rtdbHelper';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -117,11 +118,9 @@ export default function AdminDevices() {
             let sensors: any = {};
 
             try {
-              const deviceRef = ref(database, `devices/${paddyData.deviceId}`);
-              const deviceSnapshot = await get(deviceRef);
+              const rtdbData = await getDeviceData(paddyData.deviceId, '');
               
-              if (deviceSnapshot.exists()) {
-                const rtdbData = deviceSnapshot.val();
+              if (rtdbData) {
                 lastHeartbeat = rtdbData.heartbeat;
                 sensors = rtdbData.sensors || {};
                 

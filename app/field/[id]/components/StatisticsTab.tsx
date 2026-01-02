@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { db, database } from '@/lib/firebase';
 import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
+import { onDeviceValue } from '@/lib/utils/rtdbHelper';
 import { TrendsChart } from './TrendsChart';
 
 // Helper function to check device status
@@ -227,11 +228,8 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
     paddies.forEach((paddy) => {
       if (!paddy.deviceId) return;
 
-      const npkRef = ref(database, `devices/${paddy.deviceId}/npk`);
-      const unsubscribe = onValue(npkRef, (snapshot) => {
-        if (!snapshot.exists()) return;
-
-        const data = snapshot.val();
+      const unsubscribe = onDeviceValue(paddy.deviceId, 'npk', (data) => {
+        if (!data) return;
         // Normalize timestamp: handle seconds or milliseconds
         let timestamp = new Date();
         if (data.timestamp !== undefined && data.timestamp !== null) {
@@ -273,10 +271,8 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
       unsubscribers.push(unsubscribe);
 
       // Real-time listener for temperature and humidity sensors
-      const sensorsRef = ref(database, `devices/${paddy.deviceId}/sensors`);
-      const unsubscribeSensors = onValue(sensorsRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const sensors = snapshot.val();
+      const unsubscribeSensors = onDeviceValue(paddy.deviceId, 'sensors', (sensors) => {
+        if (sensors) {
           // If temperature or humidity is updated, update deviceReadings directly
           if (sensors.temperature !== undefined || sensors.humidity !== undefined) {
             console.log(`[Sensors] Temperature/Humidity updated for ${paddy.deviceId}:`, sensors);

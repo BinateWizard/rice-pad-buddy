@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { getDeviceStatus, getDeviceGPS, getDeviceNPK } from '@/lib/utils/deviceStatus';
 import { database, db } from '@/lib/firebase';
 import { ref as dbRef, onValue, off, push, set } from 'firebase/database';
+import { onDeviceValue } from '@/lib/utils/rtdbHelper';
 import { collection, addDoc, Timestamp } from 'firebase/firestore';
 import { sendDeviceAction, executeDeviceAction } from '@/lib/utils/deviceActions';
 import { waitForDeviceActionComplete } from '@/lib/utils/deviceActions';
@@ -46,10 +47,8 @@ async function logControlAction(entry: { deviceId?: string; action: string; deta
 // wait for device to set actionTaken = true (acknowledgement)
 function waitForAck(id: string, timeoutMs = 10000): Promise<boolean> {
   return new Promise((resolve) => {
-    const ackRef = dbRef(database, `devices/${id}/actionTaken`);
     let settled = false;
-    const unsub = onValue(ackRef, (snap) => {
-      const val = snap.exists() ? snap.val() : null;
+    const unsub = onDeviceValue(id, 'actionTaken', (val) => {
       if (val === true && !settled) {
         settled = true;
         try { unsub(); } catch {}
@@ -564,9 +563,7 @@ function LocationControls({ devices }: { devices: Array<{ id: string; label?: st
 
   const subscribe = (id: string) => {
     if (listeners.current[id]) return;
-    const gpsRef = dbRef(database, `devices/${id}/gps`);
-    const unsub = onValue(gpsRef, (snap) => {
-      const val = snap.exists() ? snap.val() : null;
+    const unsub = onDeviceValue(id, 'gps', (val) => {
       setLocations((prev) => ({ ...prev, [id]: val }));
     });
     listeners.current[id] = unsub;
@@ -602,10 +599,8 @@ function LocationControls({ devices }: { devices: Array<{ id: string; label?: st
   // wait for device to acknowledge actionTaken (10s timeout)
   const waitForAck = (id: string, timeoutMs = 10000) => {
     return new Promise<boolean>((resolve) => {
-      const ackRef = dbRef(database, `devices/${id}/actionTaken`);
       let settled = false;
-      const unsub = onValue(ackRef, (snap) => {
-        const val = snap.exists() ? snap.val() : null;
+      const unsub = onDeviceValue(id, 'actionTaken', (val) => {
         if (val === true && !settled) {
           settled = true;
           unsub();
