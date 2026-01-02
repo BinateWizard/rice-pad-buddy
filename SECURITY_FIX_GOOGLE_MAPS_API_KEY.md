@@ -2,7 +2,7 @@
 
 ## Issue Found
 A Google Maps API key was **exposed in the codebase**:
-- **Key**: `AIzaSyA7VRJbNFKRIWe9Dz01dRrT3CIiLI4SvPk`
+- **Key**: `AIzaSy[REDACTED]` (compromised - must be regenerated)
 - **Location**: [app/field/[id]/components/InformationTab.tsx](app/field/[id]/components/InformationTab.tsx#L607)
 - **Status**: This key was hardcoded in the source and publicly visible in GitHub
 
@@ -10,13 +10,13 @@ A Google Maps API key was **exposed in the codebase**:
 
 ### 1. **Code Fixed** 
 - Moved the API key from hardcoded string to environment variable
-- Changed from: `key=AIzaSyA7VRJbNFKRIWe9Dz01dRrT3CIiLI4SvPk`
+- Changed from: `key=AIzaSy[REDACTED]`
 - Changed to: `key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}`
 
 ### 2. **Environment Configuration Updated**
 - Added to `.env.local`:
   ```
-  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=AIzaSyA7VRJbNFKRIWe9Dz01dRrT3CIiLI4SvPk
+  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your-new-api-key-here
   ```
 
 ### 3. **Verified Removal**
@@ -26,12 +26,12 @@ A Google Maps API key was **exposed in the codebase**:
 ## CRITICAL ACTION REQUIRED - Next Steps
 
 ### ⚠️ **Step 1: Regenerate the API Key (URGENT)**
-The exposed key `AIzaSyA7VRJbNFKRIWe9Dz01dRrT3CIiLI4SvPk` has been compromised:
+The exposed key has been compromised:
 
 1. Go to **Google Cloud Console**: https://console.cloud.google.com/
 2. Select your project: **rice-padbuddy**
 3. Navigate to **APIs & Services** > **Credentials**
-4. Find the API key `AIzaSyA7VRJbNFKRIWe9Dz01dRrT3CIiLI4SvPk`
+4. Find the old API key (starting with AIzaSy...)
 5. Click the **Delete** button (trash icon) - **DELETE THE OLD KEY**
 6. Click **Create Credentials** > **API Key**
 7. Copy the **new API key**
@@ -85,8 +85,8 @@ git push --force --tags
 ### ✅ Environment Variables
 ```dotenv
 # .env.local (NEVER commit this)
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyBwrVpys6cxJHMuc67ovAba5FlsoxfpXUs
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your-new-google-maps-key
+NEXT_PUBLIC_FIREBASE_API_KEY=your-firebase-api-key
 ```
 
 ### ✅ .env.example (Template for developers)
