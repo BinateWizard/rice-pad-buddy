@@ -496,7 +496,7 @@ export default function FieldDetail() {
                 ? 'opacity-100 translate-y-0' 
                 : 'opacity-0 translate-y-4 absolute inset-0 pointer-events-none'
             }`}>
-              {activeTab === 'overview' && <OverviewTab field={field} paddies={paddies} />}
+              {activeTab === 'overview' && <OverviewTab field={field} paddies={paddies} deviceReadings={deviceReadings} />}
             </div>
 
             {/* Paddies Tab */}

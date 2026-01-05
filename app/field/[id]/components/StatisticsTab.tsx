@@ -83,14 +83,28 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
     console.log('[Statistics] Device readings:', deviceReadings);
     console.log('[Statistics] Historical logs:', historicalLogs.length);
     
-    // Get current NPK values from RTDB
-    const npkValues = deviceReadings
+    // Filter out devices with sensor issues (no readings or all null values)
+    const validDeviceReadings = deviceReadings.filter(r => {
+      if (!r || !r.npk) return false;
+      
+      // Check if at least one NPK value is valid
+      const hasValidNPK = (r.npk.n !== undefined && r.npk.n !== null) || 
+                          (r.npk.p !== undefined && r.npk.p !== null) || 
+                          (r.npk.k !== undefined && r.npk.k !== null);
+      
+      return hasValidNPK;
+    });
+
+    console.log('[Statistics] Valid device readings (excluding sensor issues):', validDeviceReadings.length, '/', deviceReadings.length);
+    
+    // Get current NPK values from RTDB (only from working sensors)
+    const npkValues = validDeviceReadings
       .filter(r => r && r.npk)
       .map(r => r.npk);
 
     console.log('[Statistics] NPK values from devices:', npkValues);
 
-    // Extract temperature and humidity from device readings
+    // Extract temperature and humidity from device readings (can include devices with NPK sensor issues)
     // Check both sensors.temperature/humidity and direct properties
     const allTemperatureFromDevices = deviceReadings
       .map(r => {
@@ -533,8 +547,28 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
 
         console.log('[NPK Goal] Found variety:', variety.name);
 
-        // Calculate total area from all paddies
-        const totalAreaHa = paddies
+        // Filter out paddies with sensor issues
+        const paddiesWithWorkingSensors = paddies.filter(paddy => {
+          if (!paddy.deviceId) return false;
+          
+          const reading = deviceReadings.find(r => r.deviceId === paddy.deviceId);
+          
+          // Exclude if no reading at all
+          if (!reading || !reading.npk) return false;
+          
+          // Exclude if all NPK values are null/undefined (sensor malfunction)
+          const npk = reading.npk;
+          const hasValidData = (npk.n !== undefined && npk.n !== null) || 
+                              (npk.p !== undefined && npk.p !== null) || 
+                              (npk.k !== undefined && npk.k !== null);
+          
+          return hasValidData;
+        });
+
+        console.log('[NPK Goal] Paddies with working sensors:', paddiesWithWorkingSensors.length, '/', paddies.length);
+
+        // Calculate total area from paddies with working sensors only
+        const totalAreaHa = paddiesWithWorkingSensors
           .map(p => {
             // Check multiple possible area sources
             if (typeof p.boundary?.area === 'number') {

@@ -19,16 +19,16 @@ export function FieldHeader({ field }: FieldHeaderProps) {
           <div className="flex items-center gap-3">
             <button
               onClick={() => router.push('/')}
-              className="inline-flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white p-1 mr-1 transition-colors"
+              className="text-white hover:text-white/80 transition-colors p-2"
               aria-label="Back to home"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-6 h-6" />
             </button>
             <div>
               <h1 className="text-xl font-bold text-white truncate max-w-[200px] sm:max-w-none">
                 {field.fieldName}
               </h1>
-              <p className="text-xs text-green-100">{field.riceVariety}</p>
+              <p className="text-xs text-white/80">{field.riceVariety}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">

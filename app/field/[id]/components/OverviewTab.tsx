@@ -22,9 +22,10 @@ const sanitizeStageName = (stageName: string) => {
 interface OverviewTabProps {
   field: any;
   paddies: any[];
+  deviceReadings?: any[];
 }
 
-export function OverviewTab({ field, paddies }: OverviewTabProps) {
+export function OverviewTab({ field, paddies, deviceReadings = [] }: OverviewTabProps) {
   const { user } = useAuth();
   const [completedTasks, setCompletedTasks] = useState<{ [key: string]: boolean }>({});
   const [loadingTasks, setLoadingTasks] = useState(true);
@@ -55,10 +56,13 @@ export function OverviewTab({ field, paddies }: OverviewTabProps) {
       }))
     : [];
 
+  // Show activities from 3 days ago up to the end of current stage
+  // This ensures recent uncompleted activities are still visible
+  const lookbackDays = 3;
   const regularActivities = variety.activities
     .filter(activity => 
-      activity.day >= daysSincePlanting && 
-      activity.day <= (currentStage?.endDay || daysSincePlanting + 7)
+      activity.day >= (daysSincePlanting - lookbackDays) && 
+      activity.day <= (currentStage?.endDay || daysSincePlanting + 14)
     )
     .sort((a, b) => a.day - b.day);
 
@@ -73,13 +77,135 @@ export function OverviewTab({ field, paddies }: OverviewTabProps) {
     if (isPrePlanting) {
       return true;
     } else {
-      return activity.day >= daysSincePlanting && 
-             activity.day <= (currentStage?.endDay || daysSincePlanting + 7);
+      // Show activities from lookback period up to end of current stage
+      return activity.day >= (daysSincePlanting - lookbackDays) && 
+             activity.day <= (currentStage?.endDay || daysSincePlanting + 14);
     }
   }).sort((a, b) => a.day - b.day);
 
   const varietyTriggers = VARIETY_ACTIVITY_TRIGGERS[field.riceVariety] || [];
   const currentTriggers = varietyTriggers.filter(t => t.stage === currentStage?.name);
+
+  // Generate NPK alerts based on device readings
+  const npkAlerts: Array<{ type: 'critical' | 'warning' | 'info'; message: string; paddyName?: string }> = [];
+  
+  // Track devices with sensor issues
+  const devicesWithSensorIssues: string[] = [];
+  
+  // NPK thresholds (mg/kg)
+  const NPK_THRESHOLDS = {
+    nitrogen: { critical: 20, low: 40, optimal: 60 },
+    phosphorus: { critical: 10, low: 20, optimal: 30 },
+    potassium: { critical: 30, low: 60, optimal: 80 }
+  };
+
+  // First, check which devices have NPK sensor issues
+  paddies.forEach((paddy) => {
+    if (!paddy.deviceId) return;
+    
+    const reading = deviceReadings.find(r => r.deviceId === paddy.deviceId);
+    const paddyName = paddy.paddyName || paddy.deviceId;
+    
+    // Check if device exists but has no NPK data or invalid data
+    if (!reading || !reading.npk) {
+      devicesWithSensorIssues.push(paddyName);
+      npkAlerts.push({
+        type: 'info',
+        message: `🔧 ${paddyName}: NPK sensor not responding. Check device connection and sensor calibration.`,
+        paddyName
+      });
+    } else {
+      const npk = reading.npk;
+      // Check if all NPK values are null/undefined (sensor malfunction)
+      if ((npk.n === undefined || npk.n === null) && 
+          (npk.p === undefined || npk.p === null) && 
+          (npk.k === undefined || npk.k === null)) {
+        devicesWithSensorIssues.push(paddyName);
+        npkAlerts.push({
+          type: 'info',
+          message: `🔧 ${paddyName}: NPK sensor malfunction detected. No readings available.`,
+          paddyName
+        });
+      }
+    }
+  });
+
+  // Only check NPK levels for devices with working sensors
+  deviceReadings.forEach((reading) => {
+    if (!reading.npk) return;
+    
+    const paddy = paddies.find(p => p.deviceId === reading.deviceId);
+    const paddyName = paddy?.paddyName || reading.deviceId;
+    
+    // Skip if this device has sensor issues
+    if (devicesWithSensorIssues.includes(paddyName)) return;
+    
+    const npk = reading.npk;
+    
+    // Only proceed if we have at least some valid NPK data
+    const hasValidData = (npk.n !== undefined && npk.n !== null) || 
+                        (npk.p !== undefined && npk.p !== null) || 
+                        (npk.k !== undefined && npk.k !== null);
+    
+    if (!hasValidData) return;
+    
+    // Check Nitrogen
+    if (npk.n !== undefined && npk.n !== null) {
+      if (npk.n < NPK_THRESHOLDS.nitrogen.critical) {
+        npkAlerts.push({
+          type: 'critical',
+          message: `🚨 CRITICAL: Nitrogen severely depleted (${npk.n} mg/kg) in ${paddyName}. Immediate fertilization required!`,
+          paddyName
+        });
+      } else if (npk.n < NPK_THRESHOLDS.nitrogen.low) {
+        npkAlerts.push({
+          type: 'warning',
+          message: `⚠️ WARNING: Low nitrogen levels (${npk.n} mg/kg) in ${paddyName}. Consider applying fertilizer.`,
+          paddyName
+        });
+      }
+    }
+    
+    // Check Phosphorus
+    if (npk.p !== undefined && npk.p !== null) {
+      if (npk.p < NPK_THRESHOLDS.phosphorus.critical) {
+        npkAlerts.push({
+          type: 'critical',
+          message: `🚨 CRITICAL: Phosphorus severely depleted (${npk.p} mg/kg) in ${paddyName}. Immediate action needed!`,
+          paddyName
+        });
+      } else if (npk.p < NPK_THRESHOLDS.phosphorus.low) {
+        npkAlerts.push({
+          type: 'warning',
+          message: `⚠️ WARNING: Low phosphorus levels (${npk.p} mg/kg) in ${paddyName}. Monitor closely.`,
+          paddyName
+        });
+      }
+    }
+    
+    // Check Potassium
+    if (npk.k !== undefined && npk.k !== null) {
+      if (npk.k < NPK_THRESHOLDS.potassium.critical) {
+        npkAlerts.push({
+          type: 'critical',
+          message: `🚨 CRITICAL: Potassium severely depleted (${npk.k} mg/kg) in ${paddyName}. Immediate fertilization required!`,
+          paddyName
+        });
+      } else if (npk.k < NPK_THRESHOLDS.potassium.low) {
+        npkAlerts.push({
+          type: 'warning',
+          message: `⚠️ WARNING: Low potassium levels (${npk.k} mg/kg) in ${paddyName}. Consider applying fertilizer.`,
+          paddyName
+        });
+      }
+    }
+  });
+
+  // Sort alerts by severity (critical first, then warnings, then info/sensor issues)
+  npkAlerts.sort((a, b) => {
+    const priority = { critical: 0, warning: 1, info: 2 };
+    return priority[a.type] - priority[b.type];
+  });
 
   useEffect(() => {
     const loadCompletedTasks = async () => {
@@ -186,6 +312,40 @@ export function OverviewTab({ field, paddies }: OverviewTabProps) {
       {/* Activities & Tasks */}
       <div className="bg-white rounded-xl shadow-md p-4 sm:p-6">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Activities & Tasks</h2>
+        
+        {/* NPK Urgent Alerts */}
+        {npkAlerts.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <span className="text-red-600">🔔</span>
+              Urgent Alerts
+            </h3>
+            <div className="space-y-2">
+              {npkAlerts.map((alert, index) => (
+                <div
+                  key={index}
+                  className={`p-4 rounded-lg border-l-4 ${
+                    alert.type === 'critical' 
+                      ? 'bg-red-50 border-red-500' 
+                      : alert.type === 'warning'
+                      ? 'bg-yellow-50 border-yellow-500'
+                      : 'bg-blue-50 border-blue-500'
+                  }`}
+                >
+                  <p className={`text-sm font-medium ${
+                    alert.type === 'critical' 
+                      ? 'text-red-900' 
+                      : alert.type === 'warning'
+                      ? 'text-yellow-900'
+                      : 'text-blue-900'
+                  }`}>
+                    {alert.message}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         
         {currentTriggers.length > 0 && (
           <div className="mb-6">
