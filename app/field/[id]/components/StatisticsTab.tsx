@@ -486,11 +486,75 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
     };
   }, [user, fieldId, paddies, timeRange, useStaticMode]);
   
+  // Simple field-level NPK goal based on summed paddy areas (if available)
+  const [fieldNPKGoal, setFieldNPKGoal] = useState<{
+    n: string; p: string; k: string;
+  } | null>(null);
+
+  useEffect(() => {
+    // Only approximate using paddies that have areaHa metadata
+    const totalAreaHa = paddies
+      .map(p => p.areaHectares as number | undefined)
+      .filter((v): v is number => typeof v === 'number' && !isNaN(v) && v > 0)
+      .reduce((sum, v) => sum + v, 0);
+
+    if (!totalAreaHa || !paddies.length) {
+      setFieldNPKGoal(null);
+      return;
+    }
+
+    // Use the first paddy's variety metadata from deviceReadings if present
+    const firstReadingWithVariety = deviceReadings.find(r => r.varietyNpkPerHa);
+    const varietyNpk = firstReadingWithVariety?.varietyNpkPerHa as any | undefined;
+
+    if (!varietyNpk) {
+      setFieldNPKGoal(null);
+      return;
+    }
+
+    const { N, P2O5, K2O } = varietyNpk;
+    const area = totalAreaHa;
+
+    const nMid = ((N.min + N.max) / 2) * area;
+    const pMid = ((P2O5.min + P2O5.max) / 2) * area;
+    const kMid = ((K2O.min + K2O.max) / 2) * area;
+
+    setFieldNPKGoal({
+      n: `${nMid.toFixed(1)} kg N`,
+      p: `${pMid.toFixed(1)} kg P₂O₅`,
+      k: `${kMid.toFixed(1)} kg K₂O`,
+    });
+  }, [paddies, deviceReadings]);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 -mx-1 sm:mx-0">
+      {/* Field NPK Goal Summary */}
+      {fieldNPKGoal && (
+        <div className="mx-1 sm:mx-0 mb-1 p-4 rounded-xl bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200">
+          <h3 className="text-sm font-semibold text-emerald-900 mb-2">Field NPK Goal (All Paddies)</h3>
+          <div className="grid grid-cols-3 gap-2 text-xs sm:text-sm">
+            <div className="rounded-lg bg-white/80 px-2 py-1.5 border border-emerald-100">
+              <p className="font-semibold text-emerald-900">N</p>
+              <p className="text-emerald-800">{fieldNPKGoal.n}</p>
+            </div>
+            <div className="rounded-lg bg-white/80 px-2 py-1.5 border border-emerald-100">
+              <p className="font-semibold text-emerald-900">P₂O₅</p>
+              <p className="text-emerald-800">{fieldNPKGoal.p}</p>
+            </div>
+            <div className="rounded-lg bg-white/80 px-2 py-1.5 border border-emerald-100">
+              <p className="font-semibold text-emerald-900">K₂O</p>
+              <p className="text-emerald-800">{fieldNPKGoal.k}</p>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-emerald-800">
+            Total fertilizer target for this field, based on mapped paddy areas and variety recommendations.
+          </p>
+        </div>
+      )}
+
       {/* Debug Info - Show current device readings */}
       {deviceReadings.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 mb-4">
           <div className="flex items-start gap-2">
             <svg className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -522,7 +586,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
       {/* Average Statistics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* Nitrogen Card */}
-        <div className="bg-white rounded-lg shadow-md p-4">
+        <div className="bg-white rounded-lg shadow-md p-3 sm:p-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-700">Nitrogen (N)</h3>
             <span className="text-xl">🧪</span>
@@ -540,7 +604,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
         </div>
 
         {/* Phosphorus Card */}
-        <div className="bg-white rounded-lg shadow-md p-4">
+        <div className="bg-white rounded-lg shadow-md p-3 sm:p-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-700">Phosphorus (P)</h3>
             <span className="text-xl">⚗️</span>
@@ -558,7 +622,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
         </div>
 
         {/* Potassium Card */}
-        <div className="bg-white rounded-lg shadow-md p-4">
+        <div className="bg-white rounded-lg shadow-md p-3 sm:p-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-700">Potassium (K)</h3>
             <span className="text-xl">🔬</span>
@@ -576,7 +640,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
         </div>
 
         {/* Temperature Card */}
-        <div className={`rounded-lg shadow-md p-4 ${fieldStats && fieldStats.temperature.average !== null ? 'bg-white' : 'bg-gray-50 opacity-60'}`}>
+        <div className={`rounded-lg shadow-md p-3 sm:p-4 ${fieldStats && fieldStats.temperature.average !== null ? 'bg-white' : 'bg-gray-50 opacity-60'}`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-600">Temperature</h3>
             <span className="text-xl">🌡️</span>
@@ -593,7 +657,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
         </div>
 
         {/* Humidity Card */}
-        <div className={`rounded-lg shadow-md p-4 ${fieldStats && fieldStats.humidity.average !== null ? 'bg-white' : 'bg-gray-50 opacity-60'}`}>
+        <div className={`rounded-lg shadow-md p-3 sm:p-4 ${fieldStats && fieldStats.humidity.average !== null ? 'bg-white' : 'bg-gray-50 opacity-60'}`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-600">Humidity</h3>
             <span className="text-xl">💧</span>
@@ -610,7 +674,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
         </div>
 
         {/* Water Level Card - Coming Soon */}
-        <div className="bg-gray-50 rounded-lg shadow-md p-4 opacity-60">
+        <div className="bg-gray-50 rounded-lg shadow-md p-3 sm:p-4 opacity-60">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-600">Water Level</h3>
             <span className="text-xl">🌊</span>
@@ -621,7 +685,7 @@ export function StatisticsTab({ paddies, deviceReadings, fieldId, setDeviceReadi
       </div>
 
       {/* Data Trends */}
-      <div className="bg-white rounded-xl shadow-md p-6">
+      <div className="bg-white rounded-xl shadow-md p-4 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
           <div>
             <h2 className="text-lg font-bold text-gray-900">Data Trends</h2>

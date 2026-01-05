@@ -556,7 +556,7 @@ export default function Home() {
       <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50 pb-24">
         {/* Navigation Bar */}
         <nav className="bg-gradient-to-r from-green-500 via-emerald-500 to-teal-500 sticky top-0 z-50 shadow-lg">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
               <div className="flex items-center gap-3">
                 <div className="relative">
@@ -566,23 +566,6 @@ export default function Home() {
                 <h1 className="text-xl font-bold text-white" style={{ fontFamily: "'Courier New', Courier, monospace" }}>PadBuddy</h1>
               </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    if (allDevicesList.length === 0) {
-                      alert('No devices available to scan. Add devices to your fields first.');
-                    } else {
-                      setIsScanModalOpen(true);
-                    }
-                  }}
-                  className="hover:bg-white/20 text-white"
-                  title="Scan all devices"
-                >
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -605,7 +588,7 @@ export default function Home() {
           </div>
         </nav>
 
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="w-full px-2 sm:px-4 lg:px-8 py-6">
           {/* Dashboard Overview Banner */}
           <Banner
             variant="gradient"
@@ -617,7 +600,10 @@ export default function Home() {
           {/* Stats Cards */}
           <div className="grid grid-cols-2 gap-4 mt-6">
             {/* Total Fields */}
-            <Card className="border-0 shadow-md bg-white">
+            <Card
+              className="border-0 shadow-md bg-white hover:shadow-lg cursor-pointer transition"
+              onClick={() => router.push("/overview?tab=fields")}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Total Fields</span>
@@ -631,7 +617,10 @@ export default function Home() {
             </Card>
 
             {/* Total Devices */}
-            <Card className="border-0 shadow-md bg-white">
+            <Card
+              className="border-0 shadow-md bg-white hover:shadow-lg cursor-pointer transition"
+              onClick={() => router.push("/overview?tab=devices")}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Total Devices</span>
@@ -645,7 +634,10 @@ export default function Home() {
             </Card>
 
             {/* Healthy Devices */}
-            <Card className="border-0 shadow-md bg-white">
+            <Card
+              className="border-0 shadow-md bg-white hover:shadow-lg cursor-pointer transition"
+              onClick={() => router.push("/overview?tab=healthy")}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Healthy Devices</span>
@@ -659,7 +651,10 @@ export default function Home() {
             </Card>
 
             {/* Issues */}
-            <Card className="border-0 shadow-md bg-white">
+            <Card
+              className="border-0 shadow-md bg-white hover:shadow-lg cursor-pointer transition"
+              onClick={() => router.push("/overview?tab=issues")}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Issues</span>

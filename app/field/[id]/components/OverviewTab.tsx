@@ -139,9 +139,9 @@ export function OverviewTab({ field, paddies }: OverviewTabProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 -mx-1 sm:mx-0">
       {/* Growth Progress Bar */}
-      <div className="bg-white rounded-xl shadow-md p-6">
+      <div className="bg-white rounded-xl shadow-md p-4 sm:p-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-gray-900">Growth Progress</h2>
           <div className="text-right">
@@ -184,7 +184,7 @@ export function OverviewTab({ field, paddies }: OverviewTabProps) {
       </div>
 
       {/* Activities & Tasks */}
-      <div className="bg-white rounded-xl shadow-md p-6">
+      <div className="bg-white rounded-xl shadow-md p-4 sm:p-6">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Activities & Tasks</h2>
         
         {currentTriggers.length > 0 && (
@@ -318,7 +318,7 @@ export function OverviewTab({ field, paddies }: OverviewTabProps) {
       </div>
 
       {/* Growth Stages */}
-      <div className="bg-white rounded-xl shadow-md p-6">
+      <div className="bg-white rounded-xl shadow-md p-4 sm:p-6">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Growth Stages</h2>
         <div className="space-y-2">
           {variety?.growthStages?.map((stage, index) => {

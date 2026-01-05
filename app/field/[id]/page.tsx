@@ -5,7 +5,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { db, database } from '@/lib/firebase';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc, query, where, orderBy, onSnapshot, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, update } from 'firebase/database';
 import { getDeviceData } from '@/lib/utils/rtdbHelper';
 import {
   Chart as ChartJS,
@@ -101,6 +101,10 @@ export default function FieldDetail() {
   const [paddyName, setPaddyName] = useState("");
   const [paddyDescription, setPaddyDescription] = useState("");
   const [deviceId, setDeviceId] = useState("");
+  const [paddyShapeType, setPaddyShapeType] = useState<"rectangle" | "trapezoid">("rectangle");
+  const [paddyLength, setPaddyLength] = useState("");
+  const [paddyWidth, setPaddyWidth] = useState("");
+  const [paddyWidth2, setPaddyWidth2] = useState("");
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [isVerifying, setIsVerifying] = useState(false);
   
@@ -360,6 +364,20 @@ export default function FieldDetail() {
     }
   }, [activeTab, paddies.length, fetchDeviceReadings]);
   
+  // Calculate area based on paddy shape
+  const calculatePaddyArea = () => {
+    if (!paddyLength) return null;
+    
+    if (paddyShapeType === 'rectangle') {
+      if (!paddyWidth) return null;
+      return parseFloat(paddyLength) * parseFloat(paddyWidth);
+    } else if (paddyShapeType === 'trapezoid') {
+      if (!paddyWidth || !paddyWidth2) return null;
+      return ((parseFloat(paddyWidth) + parseFloat(paddyWidth2)) / 2) * parseFloat(paddyLength);
+    }
+    return null;
+  };
+  
   // Handle add device submission
   const handleAddDevice = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -382,17 +400,66 @@ export default function FieldDetail() {
     
     setIsVerifying(true);
     try {
-      // Create paddy document
-      const paddyRef = doc(collection(db, `users/${user?.uid}/fields/${fieldId}/paddies`));
+      if (!user) {
+        setErrors({ submit: "Session error. Please try again." });
+        setIsVerifying(false);
+        return;
+      }
+
+      // Verify device exists in RTDB and is not owned/connected to another user
+      const deviceData = await getDeviceData(deviceId.trim(), '');
+
+      if (!deviceData) {
+        setErrors({ deviceId: "Device not found. Please check the ID" });
+        setIsVerifying(false);
+        return;
+      }
+
+      if (deviceData?.ownedBy && deviceData.ownedBy !== user.uid) {
+        setErrors({ deviceId: "Device is already owned by another user. Access restricted due to policy changes." });
+        setIsVerifying(false);
+        return;
+      }
+
+      if (deviceData?.connectedTo && deviceData.connectedTo !== user.uid) {
+        setErrors({ deviceId: "Device is already connected to another user" });
+        setIsVerifying(false);
+        return;
+      }
+
+      const areaM2 = calculatePaddyArea();
+      const areaHectares = areaM2 ? areaM2 / 10000 : null;
+
+      // Create paddy document with area metadata
+      const paddyRef = doc(collection(db, `users/${user.uid}/fields/${fieldId}/paddies`));
       await setDoc(paddyRef, {
         paddyName: paddyName.trim(),
         description: paddyDescription.trim(),
         deviceId: deviceId.trim(),
+        shapeType: paddyShapeType,
+        length: paddyLength ? parseFloat(paddyLength) : null,
+        width: paddyWidth ? parseFloat(paddyWidth) : null,
+        width2: paddyShapeType === 'trapezoid' && paddyWidth2 ? parseFloat(paddyWidth2) : null,
+        areaM2,
+        areaHectares,
+        connectedAt: new Date().toISOString(),
+        status: 'connected',
         createdAt: new Date().toISOString()
+      });
+
+      // Update device in RTDB to mark it as connected to this user and field
+      const deviceRef = ref(database, `devices/${deviceId.trim()}`);
+      await update(deviceRef, {
+        ownedBy: user.uid,
+        connectedTo: user.uid,
+        connectedAt: new Date().toISOString(),
+        fieldId,
+        paddyName: paddyName.trim(),
+        status: 'connected'
       });
       
       // Refresh paddies list
-      const paddiesRef = collection(db, `users/${user?.uid}/fields/${fieldId}/paddies`);
+      const paddiesRef = collection(db, `users/${user.uid}/fields/${fieldId}/paddies`);
       const paddiesSnapshot = await getDocs(paddiesRef);
       const paddiesData = paddiesSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -405,6 +472,10 @@ export default function FieldDetail() {
       setPaddyName("");
       setPaddyDescription("");
       setDeviceId("");
+      setPaddyShapeType('rectangle');
+      setPaddyLength("");
+      setPaddyWidth("");
+      setPaddyWidth2("");
       setErrors({});
     } catch (error) {
       console.error("Error adding device:", error);
@@ -497,7 +568,7 @@ export default function FieldDetail() {
       <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
         {/* Header */}
         <nav className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-30 border-b border-green-100">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
               {/* Breadcrumb Navigation */}
               <div className="flex items-center gap-2 text-sm">
@@ -651,7 +722,7 @@ export default function FieldDetail() {
         </div>
 
         {/* Content with smooth transitions */}
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24">
+        <main className="w-full px-2 sm:px-4 lg:px-8 pt-0 sm:pt-6 pb-24">
           {/* Tab Content with Fade Transition */}
           <div className="relative">
             {/* Overview Tab */}
@@ -757,6 +828,10 @@ export default function FieldDetail() {
                 setPaddyName("");
                 setPaddyDescription("");
                 setDeviceId("");
+                setPaddyShapeType('rectangle');
+                setPaddyLength("");
+                setPaddyWidth("");
+                setPaddyWidth2("");
               }}
               className="fixed inset-0 backdrop-blur-sm bg-black/20 z-40 transition-all"
             />
@@ -846,6 +921,107 @@ export default function FieldDetail() {
                       <p className="mt-1.5 text-xs text-gray-500">Format: DEVICE_0001</p>
                     </div>
 
+                    {/* Paddy Dimensions / Area */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Field Shape
+                      </label>
+                      <select
+                        value={paddyShapeType}
+                        onChange={(e) => {
+                          setPaddyShapeType(e.target.value as 'rectangle' | 'trapezoid');
+                          setErrors(prev => ({ ...prev, area: "" }));
+                        }}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900 mb-3"
+                      >
+                        <option value="rectangle">Rectangle</option>
+                        <option value="trapezoid">Trapezoid (varying width)</option>
+                      </select>
+                      <p className="text-xs text-gray-500 mb-4">
+                        {paddyShapeType === 'rectangle' 
+                          ? 'For rectangular paddies with uniform width'
+                          : 'For paddies where one end is wider than the other'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3">
+                        Paddy Dimensions (for area)
+                      </label>
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">Length (m)</label>
+                          <input
+                            type="number"
+                            value={paddyLength}
+                            onChange={(e) => {
+                              setPaddyLength(e.target.value);
+                              setErrors(prev => ({ ...prev, area: "" }));
+                            }}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900"
+                            placeholder="e.g., 50"
+                            step="0.1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">
+                            {paddyShapeType === 'rectangle' ? 'Width (m)' : 'Width 1 (m)'}
+                          </label>
+                          <input
+                            type="number"
+                            value={paddyWidth}
+                            onChange={(e) => {
+                              setPaddyWidth(e.target.value);
+                              setErrors(prev => ({ ...prev, area: "" }));
+                            }}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900"
+                            placeholder="e.g., 40"
+                            step="0.1"
+                          />
+                        </div>
+                      </div>
+                      {paddyShapeType === 'trapezoid' && (
+                        <div className="mb-3">
+                          <label className="block text-xs text-gray-600 mb-1">Width 2 (m)</label>
+                          <input
+                            type="number"
+                            value={paddyWidth2}
+                            onChange={(e) => {
+                              setPaddyWidth2(e.target.value);
+                              setErrors(prev => ({ ...prev, area: "" }));
+                            }}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900"
+                            placeholder="e.g., 45"
+                            step="0.1"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Width at the other end of the paddy</p>
+                        </div>
+                      )}
+
+                      {errors.area && (
+                        <p className="text-red-500 text-sm mt-1.5 flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          {errors.area}
+                        </p>
+                      )}
+
+                      {calculatePaddyArea() && (
+                        <div className="mt-3 space-y-1.5 p-3 bg-green-50 rounded-lg border border-green-200">
+                          <p className="text-sm text-green-700 font-medium">
+                            📐 Area: {calculatePaddyArea()?.toFixed(2)} m²
+                          </p>
+                          <p className="text-sm text-emerald-700 font-medium">
+                            🌾 Hectares: {((calculatePaddyArea() || 0) / 10000).toFixed(4)} ha
+                          </p>
+                        </div>
+                      )}
+                      <p className="text-xs text-gray-500 mt-2">
+                        Enter the dimensions of this paddy to store its area for fertilizer and yield calculations.
+                      </p>
+                    </div>
+
                     <div className="flex gap-3 pt-4">
                       <button
                         type="button"
@@ -855,6 +1031,10 @@ export default function FieldDetail() {
                           setPaddyName("");
                           setPaddyDescription("");
                           setDeviceId("");
+                          setPaddyShapeType('rectangle');
+                          setPaddyLength("");
+                          setPaddyWidth("");
+                          setPaddyWidth2("");
                         }}
                         className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors font-semibold"
                       >

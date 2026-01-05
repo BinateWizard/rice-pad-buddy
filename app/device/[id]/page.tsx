@@ -13,6 +13,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import { DeviceStatus, SensorReadings, ControlPanel, DeviceInformation, DataTrends, DeviceStatistics, BoundaryMappingModal, LocationModal } from './components';
 import { useWeatherData, useGPSData } from './hooks/useDeviceData';
+import { getVarietyByName } from '@/lib/utils/varietyHelpers';
 
 // Register Chart.js components
 ChartJS.register(LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend);
@@ -83,6 +84,9 @@ export default function DeviceDetail() {
   const [motorProcessing, setMotorProcessing] = useState(false);
   const [mapMode, setMapMode] = useState<'view' | 'edit'>('view');
   const [deviceOnlineStatus, setDeviceOnlineStatus] = useState<{online: boolean; lastChecked: number} | null>(null);
+
+  // Per-paddy NPK goal (total fertilizer target), derived from field variety and paddy area
+  const [npkGoal, setNpkGoal] = useState<{ n: string; p: string; k: string } | null>(null);
 
   // Live NPK data from Firestore logs (populated by Cloud Functions)
   const paddyLiveData = usePaddyLiveData(user?.uid ?? null, fieldInfo?.id ?? null, paddyInfo?.id ?? null);
@@ -406,6 +410,52 @@ export default function DeviceDetail() {
     
     fetchDeviceInfo();
   }, [user, deviceId]);
+
+  // Derive NPK goal for this paddy based on field variety and mapped area
+  useEffect(() => {
+    try {
+      if (!fieldInfo || !paddyInfo) {
+        setNpkGoal(null);
+        return;
+      }
+
+      const fieldData: any = fieldInfo;
+      const paddyData: any = paddyInfo;
+
+      const varietyName = fieldData.riceVariety || fieldData.varietyName;
+      const variety = varietyName ? getVarietyByName(varietyName) : null;
+
+      let areaHa: number | null = null;
+      if (typeof paddyData?.boundary?.area === 'number') {
+        areaHa = paddyData.boundary.area / 10000;
+      } else if (typeof paddyData?.areaHectares === 'number') {
+        areaHa = paddyData.areaHectares;
+      } else if (typeof paddyData?.areaM2 === 'number') {
+        areaHa = paddyData.areaM2 / 10000;
+      }
+
+      if (!variety || !areaHa || areaHa <= 0) {
+        setNpkGoal(null);
+        return;
+      }
+
+      const { N, P2O5, K2O } = variety.npkPerHa;
+      const area = areaHa;
+
+      const nMid = ((N.min + N.max) / 2) * area;
+      const pMid = ((P2O5.min + P2O5.max) / 2) * area;
+      const kMid = ((K2O.min + K2O.max) / 2) * area;
+
+      setNpkGoal({
+        n: nMid.toFixed(1),
+        p: pMid.toFixed(1),
+        k: kMid.toFixed(1),
+      });
+    } catch (error) {
+      console.error('Error deriving NPK goal for paddy:', error);
+      setNpkGoal(null);
+    }
+  }, [fieldInfo, paddyInfo]);
 
   // Load existing boundary coordinates from Firestore
   useEffect(() => {
@@ -805,7 +855,7 @@ export default function DeviceDetail() {
     <ProtectedRoute>
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
         <nav className="bg-gradient-to-r from-green-500 via-emerald-500 to-teal-500 shadow-lg sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
               <div className="flex items-center gap-2 text-sm">
                 {/* Breadcrumb Navigation */}
@@ -851,7 +901,7 @@ export default function DeviceDetail() {
           </div>
         </nav>
 
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="w-full px-2 sm:px-4 lg:px-8 py-6">
           {/* Device Status Component */}
           <DeviceStatus
             deviceId={deviceId}
@@ -864,6 +914,7 @@ export default function DeviceDetail() {
           <SensorReadings
             paddyLiveData={paddyLiveData}
             weatherData={weatherData}
+            npkGoal={npkGoal}
           />
 
           {/* NPK Statistics Component (part of data insights) */}

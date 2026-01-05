@@ -133,12 +133,12 @@ export function PaddiesTab({ paddies, deviceReadings, fieldId, onAddDevice, onVi
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-4 -mx-1 sm:mx-0">
+      <div className="flex items-center justify-between px-1 sm:px-0 mt-1">
         <h2 className="text-2xl font-bold text-gray-900">Connected Paddies</h2>
       </div>
       {paddies.length === 0 ? (
-        <div className="bg-white rounded-xl shadow-md p-12 text-center">
+        <div className="bg-white rounded-xl shadow-md p-8 sm:p-12 text-center">
           <p className="text-gray-500">No paddies connected yet</p>
         </div>
       ) : (
@@ -156,7 +156,7 @@ export function PaddiesTab({ paddies, deviceReadings, fieldId, onAddDevice, onVi
               <div 
                 key={paddy.id} 
                 onClick={() => router.push(`/device/${paddy.deviceId}`)}
-                className="bg-white rounded-xl shadow-md border border-gray-200 p-6 hover:border-green-500 hover:shadow-lg transition-all cursor-pointer">
+                className="bg-white rounded-xl shadow-md border border-gray-200 p-4 sm:p-6 hover:border-green-500 hover:shadow-lg transition-all cursor-pointer">
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex-1">
                     <h3 className="font-semibold text-gray-900">{paddy.paddyName}</h3>

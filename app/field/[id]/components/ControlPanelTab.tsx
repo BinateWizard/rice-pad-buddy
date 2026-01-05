@@ -4,18 +4,93 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { getDeviceStatus, getDeviceGPS, getDeviceNPK } from '@/lib/utils/deviceStatus';
 import { database, db } from '@/lib/firebase';
-import { ref as dbRef, onValue, off, push, set } from 'firebase/database';
+import { ref as dbRef, onValue, off, get, push, set } from 'firebase/database';
 import { onDeviceValue } from '@/lib/utils/rtdbHelper';
 import { collection, addDoc, Timestamp } from 'firebase/firestore';
 import { sendDeviceCommand } from '@/lib/utils/deviceCommands';
 
+// High-level tabs for the control panel.
+// Desktop keeps the full set; on mobile they wrap into 2 rows
+// so everything is visible without a horizontal slider.
 const TABS = [
-  { label: 'Overview' },
-  { label: 'Controls' },
-  { label: 'Location' },
-  { label: 'Logs/History' },
-  { label: 'Device Info' },
-  { label: 'Settings' },
+  { id: 'overview', label: 'Overview' },
+  { id: 'controls', label: 'Controls' },
+  { id: 'location', label: 'Location' },
+  { id: 'logs', label: 'Logs/History' },
+  { id: 'info', label: 'Device Info' },
+  { id: 'settings', label: 'Settings' },
+];
+
+type ControlActionId =
+  | 'relay_on'
+  | 'relay_off'
+  | 'motor_extend'
+  | 'motor_retract'
+  | 'gps_fetch'
+  | 'npk_scan';
+
+interface ControlAction {
+  id: ControlActionId;
+  label: string;
+  description: string;
+  nodeId: 'ESP32A' | 'ESP32B' | 'ESP32C';
+  role: 'relay' | 'motor' | 'npk';
+  action: string;
+  // Some actions (relay) need an extra relay selector in the modal.
+  requiresRelay?: boolean;
+}
+
+const CONTROL_ACTIONS: ControlAction[] = [
+  {
+    id: 'relay_on',
+    label: 'Turn Relay ON',
+    description: 'Turn a specific relay ON on selected devices (ESP32A).',
+    nodeId: 'ESP32A',
+    role: 'relay',
+    action: 'on',
+    requiresRelay: true,
+  },
+  {
+    id: 'relay_off',
+    label: 'Turn Relay OFF',
+    description: 'Turn a specific relay OFF on selected devices (ESP32A).',
+    nodeId: 'ESP32A',
+    role: 'relay',
+    action: 'off',
+    requiresRelay: true,
+  },
+  {
+    id: 'motor_extend',
+    label: 'Extend Motor',
+    description: 'Extend irrigation motor on selected devices (ESP32B).',
+    nodeId: 'ESP32B',
+    role: 'motor',
+    action: 'extend',
+  },
+  {
+    id: 'motor_retract',
+    label: 'Retract Motor',
+    description: 'Retract irrigation motor on selected devices (ESP32B).',
+    nodeId: 'ESP32B',
+    role: 'motor',
+    action: 'retract',
+  },
+  {
+    id: 'gps_fetch',
+    label: 'Request GPS Location',
+    description: 'Ask devices to send their latest GPS fix (ESP32B).',
+    nodeId: 'ESP32B',
+    role: 'motor',
+    action: 'get_location',
+  },
+  {
+    id: 'npk_scan',
+    label: 'Run NPK Scan',
+    description: 'Trigger on-device NPK soil scan (ESP32C).',
+    nodeId: 'ESP32C',
+    role: 'npk',
+    action: 'scan',
+  },
 ];
 
 // Helper for time display (moved to top-level so subcomponents can use it)
@@ -76,9 +151,11 @@ export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings 
   const [activeTab, setActiveTab] = useState(0);
   const [deviceData, setDeviceData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [controlMode, setControlMode] = useState<'field' | 'individual'>('field'); // 'field' for all, 'individual' for per-device
   const [sendingRelay, setSendingRelay] = useState<string | null>(null);
+  const [isActionModalOpen, setIsActionModalOpen] = useState(false);
+  const [selectedActionId, setSelectedActionId] = useState<ControlActionId | null>(null);
 
+  // Fetch initial device data
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
@@ -98,7 +175,8 @@ export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings 
               paddyName: paddy.paddyName,
               status, 
               gps, 
-              npk 
+              npk,
+              relayStates: { 1: 'unknown', 2: 'unknown', 3: 'unknown', 4: 'unknown' } as Record<number, 'on' | 'off' | 'unknown'>
             };
           })
         );
@@ -106,8 +184,83 @@ export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings 
       }
       setLoading(false);
     }
-    if (activeTab === 0) fetchAll();
+    if (activeTab === 0 || TABS[activeTab].id === 'info') fetchAll();
   }, [activeTab, paddies]);
+
+  // Listen to relay states from RTDB in real-time (same as device page)
+  useEffect(() => {
+    if (!paddies || paddies.length === 0) return;
+    if (activeTab !== 0 && TABS[activeTab].id !== 'info') return;
+
+    const allUnsubscribes: (() => void)[] = [];
+
+    paddies.forEach((paddy) => {
+      const deviceId = paddy.deviceId;
+      if (!deviceId) return;
+
+      // Listen to each relay individually from /relays path (primary source)
+      for (let i = 1; i <= 4; i++) {
+        const relayRef = dbRef(database, `devices/${deviceId}/relays/${i}`);
+        const unsubscribe = onValue(relayRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const relayData = snapshot.val();
+            const state = relayData.state === 'ON' || relayData.state === 'on' || relayData.state === true ? 'on' : 'off';
+            
+            setDeviceData(prev => 
+              prev.map(dev => {
+                if (dev.id === deviceId) {
+                  return {
+                    ...dev,
+                    relayStates: {
+                      ...dev.relayStates,
+                      [i]: state
+                    }
+                  };
+                }
+                return dev;
+              })
+            );
+          }
+        });
+        allUnsubscribes.push(unsubscribe);
+      }
+
+      // FALLBACK: If /relays path doesn't have data yet, derive from latest commands
+      // This keeps the UI in sync even before verifyLiveCommand populates /relays
+      const commandsRef = dbRef(database, `devices/${deviceId}/commands/ESP32A`);
+      const commandsUnsubscribe = onValue(commandsRef, (snapshot) => {
+        const commands = snapshot.val();
+        if (!commands) return;
+
+        setDeviceData((prev) => 
+          prev.map(dev => {
+            if (dev.id !== deviceId) return dev;
+            
+            const newRelayStates = { ...dev.relayStates };
+            
+            for (let i = 1; i <= 4; i++) {
+              const cmd = commands[`relay${i}`];
+              if (!cmd) continue;
+
+              const rawState = (cmd.actualState || cmd.action || '').toString().toUpperCase();
+              const isOn = rawState === 'ON' || rawState === '1' || rawState === 'TRUE';
+              newRelayStates[i] = isOn ? 'on' : 'off';
+            }
+
+            return {
+              ...dev,
+              relayStates: newRelayStates
+            };
+          })
+        );
+      });
+      allUnsubscribes.push(commandsUnsubscribe);
+    });
+
+    return () => {
+      allUnsubscribes.forEach(unsub => unsub());
+    };
+  }, [paddies, activeTab]);
 
   // Simple relay sender for ESP32A
   const sendRelayCommand = async (deviceId: string, relay: 1 | 2 | 3 | 4, action: 'on' | 'off' | 'toggle') => {
@@ -139,14 +292,27 @@ export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings 
   };
 
   
-
   return (
-    <div className="w-full flex flex-col items-center mt-8 overflow-y-auto overflow-x-hidden" style={{ minHeight: '100vh' }}>
-      <div className="w-full max-w-4xl flex flex-col h-full min-h-[400px]">
-        {/* Modern Tab Controller - preserved original layout. DO NOT MODIFY STYLES BELOW */}
+    <div className="w-full flex flex-col items-stretch overflow-y-auto overflow-x-hidden">
+      <div className="w-full max-w-4xl mx-auto flex flex-col h-full min-h-[400px] bg-white/90 backdrop-blur border border-gray-200 rounded-none sm:rounded-2xl shadow-lg overflow-hidden text-black">
+        {/* Tab controller attached to top of panel */}
         <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
         {/* Main Content Area */}
-        <div className="bg-white/90 backdrop-blur border border-gray-200 rounded-2xl shadow-lg p-8 min-h-[200px] h-full flex-1 overflow-y-auto overflow-x-hidden pr-2 text-black" style={{ minHeight: 200 }}>
+        <div className="p-4 sm:p-6 min-h-[200px] h-full flex-1 overflow-y-auto overflow-x-hidden pr-2" style={{ minHeight: 200 }}>
+          {/* Generic action runner modal (works across relays/motors/GPS/NPK) */}
+          {isActionModalOpen && selectedActionId && (
+            <ActionRunnerModal
+              actionId={selectedActionId}
+              onClose={() => setIsActionModalOpen(false)}
+              devices={paddies
+                .filter((p) => p.deviceId)
+                .map((p) => ({
+                  id: p.deviceId,
+                  label: p.paddyName || `Paddy ${p.id}`,
+                }))}
+              userId={user?.uid || null}
+            />
+          )}
           {activeTab === 0 ? (
             loading ? (
               <div className="text-black text-center">Loading status...</div>
@@ -207,122 +373,200 @@ export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings 
                         </div>
                       </div>
                     </div>
-
-                    {/* Relay Controls */}
-                    <div className="mt-4 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50">
-                      <div className="font-semibold mb-3 text-black">Relay Control</div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {[1, 2, 3, 4].map((relay) => (
-                          <div key={`relay-${dev.id}-${relay}`} className="flex flex-col gap-2">
-                            <div className="text-xs font-semibold text-gray-700">Relay {relay}</div>
-                            <div className="flex gap-2">
-                              <button
-                                className="flex-1 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition disabled:opacity-60"
-                                disabled={!!sendingRelay}
-                                onClick={() => sendRelayCommand(dev.id, relay as 1 | 2 | 3 | 4, 'on')}
-                              >
-                                On
-                              </button>
-                              <button
-                                className="flex-1 px-3 py-2 rounded-lg bg-gray-200 text-gray-800 text-sm font-semibold hover:bg-gray-300 transition disabled:opacity-60"
-                                disabled={!!sendingRelay}
-                                onClick={() => sendRelayCommand(dev.id, relay as 1 | 2 | 3 | 4, 'off')}
-                              >
-                                Off
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      {sendingRelay && (
-                        <div className="text-xs text-gray-600 mt-2">Sending command...</div>
-                      )}
-                    </div>
                   </div>
                 ))}
               </div>
             )
-          ) : TABS[activeTab].label === 'Controls' ? (
+          ) : TABS[activeTab].id === 'controls' ? (
               paddies.length === 0 ? (
-                <div className="text-black text-center py-8">
-                  <p>No paddies connected to this field.</p>
-                  <p className="text-sm text-gray-600 mt-2">Add a paddy first to control relays and devices.</p>
+                <div className="text-center py-12">
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-lg font-semibold text-gray-900 mb-1">No paddies connected</p>
+                      <p className="text-sm text-gray-600">Add a paddy with a device to start controlling relays and sensors</p>
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-6">
-                  {/* Control Mode Selector */}
-                  <div className="p-4 rounded-lg bg-blue-50 border-2 border-blue-200">
-                    <div className="font-semibold text-black mb-3">Relay Control Mode</div>
-                    <div className="flex gap-4">
-                      <label className="flex items-center gap-2 cursor-pointer p-3 rounded bg-white border-2 transition-all" style={{borderColor: controlMode === 'field' ? '#059669' : '#e5e7eb'}}>
-                        <input
-                          type="radio"
-                          name="controlMode"
-                          value="field"
-                          checked={controlMode === 'field'}
-                          onChange={(e) => setControlMode(e.target.value as 'field' | 'individual')}
-                          className="w-4 h-4"
-                        />
-                        <div>
-                          <div className="font-semibold text-black">Field-Level Control</div>
-                          <div className="text-xs text-gray-600">Control all paddies in this field at once</div>
-                        </div>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer p-3 rounded bg-white border-2 transition-all" style={{borderColor: controlMode === 'individual' ? '#059669' : '#e5e7eb'}}>
-                        <input
-                          type="radio"
-                          name="controlMode"
-                          value="individual"
-                          checked={controlMode === 'individual'}
-                          onChange={(e) => setControlMode(e.target.value as 'field' | 'individual')}
-                          className="w-4 h-4"
-                        />
-                        <div>
-                          <div className="font-semibold text-black">Individual Control</div>
-                          <div className="text-xs text-gray-600">Control each paddy separately</div>
-                        </div>
-                      </label>
+                <div className="space-y-4">
+                  {/* High-level action runner (works for relays, motors, GPS, NPK) */}
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <div className="text-base font-bold text-gray-900">Device Actions</div>
+                      <div className="text-xs text-gray-600 mt-1">Select an action to control your devices</div>
                     </div>
                   </div>
 
-                  {/* Field-Level Control */}
-                  {controlMode === 'field' && (
-                    <FieldLevelRelayControls devices={deviceData} fieldName={fieldId ? `Field ${fieldId}` : 'This Field'} />
-                  )}
-
-                  {/* Individual Device Control */}
-                  {controlMode === 'individual' && (
-                    <div className="p-4 rounded-lg border-transparent bg-gray-50">
-                      <div className="font-semibold mb-4 text-black">Per-Paddy Relay Control</div>
-                      <div className="space-y-4">
-                        {deviceData.map((dev) => (
-                          <div key={`${dev.paddyId}-${dev.id}`} className="border-2 border-gray-300 rounded-lg p-4 bg-white">
-                            <div className="flex items-center gap-3 mb-3">
-                              <span className={`inline-block w-3 h-3 rounded-full ${dev.status?.color === 'green' ? 'bg-green-500' : dev.status?.color === 'yellow' ? 'bg-yellow-400' : 'bg-red-500'}`}></span>
-                              <span className="font-bold text-black">{dev.paddyName || `Paddy ${dev.paddyId}`}</span>
-                              <span className="text-xs font-semibold px-2 py-1 rounded bg-gray-100 text-black">{dev.status?.badge || 'Unknown'}</span>
-                            </div>
-                            <RelayControlsPerDevice deviceId={dev.id} paddyName={dev.paddyName} />
+                  <div className="space-y-3">
+                    {CONTROL_ACTIONS.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedActionId(action.id);
+                          setIsActionModalOpen(true);
+                        }}
+                        className="w-full rounded-2xl border-2 border-emerald-100 bg-white px-5 py-4 text-left shadow-sm hover:border-emerald-400 hover:shadow-lg hover:bg-emerald-50/50 active:scale-[0.98] transition-all duration-200 min-h-[64px]"
+                        aria-label={`Run ${action.label}`}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="text-sm font-bold text-emerald-700 mb-1">{action.label}</div>
+                            <div className="text-xs text-gray-600 line-clamp-2">{action.description}</div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                          <span className="text-2xl leading-none text-emerald-400 font-light">›</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )
             ) : (
               <div className="text-black text-center">
-                {TABS[activeTab].label === 'Logs/History' && (
+                {TABS[activeTab].id === 'logs' && (
                   <LogsControls />
                 )}
-                {TABS[activeTab].label === 'Device Info' && (
-                  <span>Device model, firmware, and module info will appear here.</span>
-                )}
-                {TABS[activeTab].label === 'Settings' && (
-                  <span>Configuration options will appear here.</span>
-                )}
-                {TABS[activeTab].label === 'Location' && (
+                {TABS[activeTab].id === 'location' && (
                   <LocationControls devices={deviceData} />
+                )}
+                {TABS[activeTab].id === 'info' && (
+                  <div className="space-y-4">
+                    <div className="mb-4">
+                      <h3 className="text-lg font-bold text-gray-900 mb-1">Device Summary</h3>
+                      <p className="text-sm text-gray-600">Overview of all devices in this field</p>
+                    </div>
+
+                    {deviceData.length === 0 ? (
+                      <div className="text-center py-12">
+                        <div className="flex flex-col items-center gap-4">
+                          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
+                            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-lg font-semibold text-gray-900 mb-1">No devices found</p>
+                            <p className="text-sm text-gray-600">Add paddies with devices to see their summary</p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="bg-gray-100 border-b-2 border-gray-200">
+                              <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Device ID</th>
+                              <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Paddy</th>
+                              <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Status</th>
+                              <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Relay 1</th>
+                              <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Relay 2</th>
+                              <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Relay 3</th>
+                              <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">Relay 4</th>
+                              <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">NPK</th>
+                              <th className="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase">GPS</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {deviceData.map((dev: any, idx: number) => (
+                              <tr key={dev.id} className={`border-b border-gray-200 hover:bg-gray-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+                                <td className="px-4 py-3">
+                                  <div className="font-mono text-xs font-semibold text-gray-900">{dev.id}</div>
+                                  <div className="text-[10px] text-gray-500 mt-0.5">{formatTimeAgo(dev.status?.lastUpdate)}</div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="text-sm font-semibold text-gray-900">{dev.paddyName || `Paddy ${dev.paddyId}`}</div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`inline-block w-2.5 h-2.5 rounded-full ${dev.status?.color === 'green' ? 'bg-green-500' : dev.status?.color === 'yellow' ? 'bg-yellow-400' : 'bg-red-500'}`}></span>
+                                    <span className="text-xs font-semibold text-gray-900">{dev.status?.badge || 'Unknown'}</span>
+                                  </div>
+                                </td>
+                                {[1, 2, 3, 4].map((relayNum) => {
+                                  const relayState = dev.relayStates?.[relayNum] || 'unknown';
+                                  return (
+                                    <td key={`relay-${relayNum}`} className="px-4 py-3 text-center">
+                                      {relayState === 'on' ? (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-green-100 text-green-800 border border-green-200">
+                                          ON
+                                        </span>
+                                      ) : relayState === 'off' ? (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700 border border-gray-300">
+                                          OFF
+                                        </span>
+                                      ) : (
+                                        <span className="text-xs text-gray-400">-</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-4 py-3 text-center">
+                                  {dev.npk && (dev.npk.n !== undefined || dev.npk.p !== undefined || dev.npk.k !== undefined) ? (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                      Active
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-gray-200 text-gray-600 border border-gray-300">
+                                      No data
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {dev.gps?.lat && dev.gps?.lng ? (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                      Located
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-gray-200 text-gray-600 border border-gray-300">
+                                      No data
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Summary Stats */}
+                    {deviceData.length > 0 && (
+                      <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div className="p-4 rounded-xl bg-green-50 border-2 border-green-200">
+                          <div className="text-xs font-semibold text-green-700 mb-1">Online Devices</div>
+                          <div className="text-2xl font-black text-green-600">
+                            {deviceData.filter((d: any) => d.status?.color === 'green').length}
+                          </div>
+                        </div>
+                        <div className="p-4 rounded-xl bg-yellow-50 border-2 border-yellow-200">
+                          <div className="text-xs font-semibold text-yellow-700 mb-1">Issues</div>
+                          <div className="text-2xl font-black text-yellow-600">
+                            {deviceData.filter((d: any) => d.status?.color === 'yellow').length}
+                          </div>
+                        </div>
+                        <div className="p-4 rounded-xl bg-red-50 border-2 border-red-200">
+                          <div className="text-xs font-semibold text-red-700 mb-1">Offline</div>
+                          <div className="text-2xl font-black text-red-600">
+                            {deviceData.filter((d: any) => d.status?.color === 'red').length}
+                          </div>
+                        </div>
+                        <div className="p-4 rounded-xl bg-blue-50 border-2 border-blue-200">
+                          <div className="text-xs font-semibold text-blue-700 mb-1">Total Devices</div>
+                          <div className="text-2xl font-black text-blue-600">
+                            {deviceData.length}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {TABS[activeTab].id === 'settings' && (
+                  <span>Configuration options will appear here.</span>
                 )}
               </div>
             )
@@ -333,21 +577,23 @@ export default function ControlPanelTab({ paddies = [], fieldId, deviceReadings 
   );
 }
 
-// TabBar component - keeps the tab layout stable. Keep classes here in sync with original design.
+// TabBar component - horizontal tabs connected to the panel header
 function TabBar({ activeTab, setActiveTab }: { activeTab: number; setActiveTab: (i: number) => void; }) {
   return (
-    <div className="flex w-full mb-4 p-1 gap-2 bg-white border border-gray-200 shadow-sm rounded-2xl flex-shrink-0 z-30">
+    <div className="flex w-full flex-wrap border-b-2 border-gray-200 bg-white/90">
       {TABS.map((tab, idx) => (
         <button
-          key={tab.label}
-          className={`flex-1 h-[56px] min-h-[56px] flex items-center justify-center text-sm sm:text-base font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 rounded-xl border
+          key={tab.id}
+          className={`flex-1 sm:flex-none px-3 sm:px-5 h-12 flex items-center justify-center text-xs sm:text-sm font-bold whitespace-nowrap transition-all duration-200 border-b-4
             ${activeTab === idx
-              ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md border-emerald-500 scale-[1.01]'
-              : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-gray-200'}
+              ? 'border-emerald-500 text-emerald-600 bg-white shadow-sm'
+              : 'border-transparent text-gray-600 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50/50 active:scale-95'}
           `}
-          style={{ minWidth: 0 }}
           onClick={() => setActiveTab(idx)}
           tabIndex={0}
+          role="tab"
+          aria-selected={activeTab === idx}
+          aria-label={tab.label}
         >
           {tab.label}
         </button>
@@ -356,557 +602,264 @@ function TabBar({ activeTab, setActiveTab }: { activeTab: number; setActiveTab: 
   );
 }
 
-// FieldLevelRelayControls - Select devices and control their relays
-function FieldLevelRelayControls({ devices, fieldName }: { devices: any[]; fieldName: string }) {
-  const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
-  const [selectedRelays, setSelectedRelays] = useState<Set<number>>(new Set([0, 1, 2, 3]));
-  const [relayStates, setRelayStates] = useState([false, false, false, false]);
-  const [loadingRelays, setLoadingRelays] = useState<Set<number>>(new Set());
-  const [deviceLoadingStates, setDeviceLoadingStates] = useState<Record<string, boolean>>({});
-  const [messages, setMessages] = useState<Record<number, string>>({});
-  const [lastAction, setLastAction] = useState<{relayIndex: number; previousState: boolean} | null>(null);
-  const [showConfirmation, setShowConfirmation] = useState(false);
+interface ActionRunnerModalProps {
+  actionId: ControlActionId;
+  onClose: () => void;
+  devices: Array<{ id: string; label: string }>;
+  userId: string | null;
+}
 
-  const toggleRelayForSelected = async (relayIndex: number) => {
-    if (loadingRelays.has(relayIndex) || !selectedRelays.has(relayIndex) || selectedDevices.size === 0) return;
+function ActionRunnerModal({ actionId, onClose, devices, userId }: ActionRunnerModalProps) {
+  const action = CONTROL_ACTIONS.find((a) => a.id === actionId);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [results, setResults] = useState<Record<string, { status: 'idle' | 'running' | 'success' | 'error'; message: string }>>({});
+  const [isRunning, setIsRunning] = useState(false);
+  const [relayNumber, setRelayNumber] = useState(1);
 
-    const prev = [...relayStates];
-    const next = [...relayStates];
-    next[relayIndex] = !next[relayIndex];
-    
-    // Store for undo functionality (Rule 6: Easy reversal)
-    setLastAction({ relayIndex, previousState: prev[relayIndex] });
-    
-    setRelayStates(next);
-    setLoadingRelays(prev => new Set([...prev, relayIndex]));
-    setMessages({ ...messages, [relayIndex]: `Sending to ${selectedDevices.size} device(s)...` });
-
-    // Track loading state for each device
-    const deviceLoadingMap: Record<string, boolean> = {};
-    selectedDevices.forEach(deviceId => {
-      deviceLoadingMap[deviceId] = true;
+  useEffect(() => {
+    const initialSelected: Record<string, boolean> = {};
+    devices.forEach((d) => {
+      initialSelected[d.id] = true;
     });
-    setDeviceLoadingStates(deviceLoadingMap);
+    setSelected(initialSelected);
+    setResults({});
+    setIsRunning(false);
+  }, [devices, actionId]);
 
-    // Send command to selected devices in parallel
-    try {
-      const results = await Promise.all(
-        Array.from(selectedDevices).map(async (deviceId) => {
-          const dev = devices.find(d => d.id === deviceId);
-          const relayNum = relayIndex + 1;
-          const action = next[relayIndex] ? 'on' : 'off';
-          try {
-            const { user } = useAuth();
-            const res = await sendDeviceCommand(deviceId, 'ESP32A', 'relay', action, { relay: relayNum }, user?.uid || '');
-            
-            setDeviceLoadingStates(prev => ({ ...prev, [deviceId]: false }));
-            return { deviceId, paddyName: dev?.paddyName, acknowledged: res.success, completed: res.status === 'completed' };
-          } catch (e) {
-            setDeviceLoadingStates(prev => ({ ...prev, [deviceId]: false }));
-            return { deviceId, paddyName: dev?.paddyName, acknowledged: false, completed: false, error: String(e) };
-          }
-        })
-      );
+  if (!action) return null;
 
-      // Process results for feedback (HCI Rules 3, 5)
-      const allAcknowledged = results.every(r => r.acknowledged);
-      const allCompleted = results.every(r => r.completed);
-      const failedCount = results.filter(r => !r.completed).length;
+  const handleToggleDevice = (id: string) => {
+    setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
-      // Rule 3: Informative feedback & Rule 4: Dialog closure
-      if (allAcknowledged) {
-        if (allCompleted) {
-          setMessages({ ...messages, [relayIndex]: `✓ Success: Relay ${relayIndex + 1} ${next[relayIndex] ? 'ON' : 'OFF'} for ${selectedDevices.size} device(s)` });
-          setShowConfirmation(true);
-          setTimeout(() => setShowConfirmation(false), 3000);
-        } else {
-          setMessages({ ...messages, [relayIndex]: `⚠ Partially completed: ${failedCount} device(s) incomplete` });
+  const handleRun = async () => {
+    if (!userId) {
+      alert('You must be signed in to run device commands.');
+      return;
+    }
+    const targetIds = devices.map((d) => d.id).filter((id) => selected[id]);
+    if (targetIds.length === 0) {
+      alert('Please select at least one device.');
+      return;
+    }
+
+    setIsRunning(true);
+    setResults((prev) => {
+      const next = { ...prev };
+      targetIds.forEach((id) => {
+        next[id] = { status: 'running', message: 'Sending command…' };
+      });
+      return next;
+    });
+
+    await Promise.all(
+      targetIds.map(async (deviceId) => {
+        const params: Record<string, any> = {};
+
+        if (action.role === 'relay') {
+          params.relay = relayNumber;
         }
-      } else {
-        // Rule 5: Simple error handling
-        setMessages({ ...messages, [relayIndex]: `✗ Error: Failed on ${failedCount} device(s). Please retry.` });
-        setRelayStates(prev); // revert
-      }
+        if (action.role === 'motor' && (action.action === 'extend' || action.action === 'retract')) {
+          params.duration = 5000; // 5s default, consistent with device page
+        }
+        if (action.role === 'npk' && action.action === 'scan') {
+          // Duration handled on-device; optional hint only
+          params.duration = 30000;
+        }
 
-      setTimeout(() => setMessages(m => { delete m[relayIndex]; return { ...m }; }), 5000);
-    } catch (e) {
-      console.error(e);
-      setRelayStates(prev); // revert
-      setMessages({ ...messages, [relayIndex]: `✗ Network error. Please check connection and retry.` });
-      setTimeout(() => setMessages(m => { delete m[relayIndex]; return { ...m }; }), 5000);
-    } finally {
-      setLoadingRelays(prev => {
-        const next = new Set(prev);
-        next.delete(relayIndex);
-        return next;
-      });
-      setDeviceLoadingStates({});
-    }
+        try {
+          const res = await sendDeviceCommand(
+            deviceId,
+            action.nodeId,
+            action.role,
+            action.action,
+            params,
+            userId
+          );
+
+          setResults((prev) => ({
+            ...prev,
+            [deviceId]: {
+              status: res.success ? 'success' : 'error',
+              message: res.message || (res.success ? 'Success' : 'Failed'),
+            },
+          }));
+
+          logControlAction({
+            deviceId,
+            action: `${action.role}:${action.action}`,
+            details: {
+              via: 'field-control-modal',
+              relay: params.relay,
+              duration: params.duration,
+              success: res.success,
+              status: res.status,
+              message: res.message,
+            },
+          });
+        } catch (e: any) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setResults((prev) => ({
+            ...prev,
+            [deviceId]: { status: 'error', message: `Error: ${msg}` },
+          }));
+          logControlAction({
+            deviceId,
+            action: `${action.role}:${action.action}`,
+            details: { via: 'field-control-modal', error: msg },
+          });
+        }
+      })
+    );
+
+    setIsRunning(false);
   };
 
-  // Rule 6: Easy reversal - Undo last action
-  const undoLastAction = async () => {
-    if (!lastAction) return;
-    
-    const { relayIndex, previousState } = lastAction;
-    const newStates = [...relayStates];
-    newStates[relayIndex] = previousState;
-    setRelayStates(newStates);
-    
-    // Send command to revert
-    setLoadingRelays(prev => new Set([...prev, relayIndex]));
-    const relayNum = relayIndex + 1;
-    const action = previousState ? 'on' : 'off';
-    
-    try {
-      const { user } = useAuth();
-      await Promise.all(
-        Array.from(selectedDevices).map(deviceId => 
-          sendDeviceCommand(deviceId, 'ESP32A', 'relay', action, { relay: relayNum }, user?.uid || '')
-        )
-      );
-      setMessages({ ...messages, [relayIndex]: '↶ Action reversed successfully' });
-      setLastAction(null);
-    } catch (e) {
-      setMessages({ ...messages, [relayIndex]: '✗ Undo failed' });
-    } finally {
-      setLoadingRelays(prev => {
-        const next = new Set(prev);
-        next.delete(relayIndex);
-        return next;
-      });
-    }
-  };
+  const anySelected = devices.some((d) => selected[d.id]);
 
   return (
-    <div className="space-y-4">
-      {/* Rule 3 & 4: Success confirmation banner */}
-      {showConfirmation && (
-        <div className="p-4 rounded-lg bg-green-100 border-2 border-green-500 flex items-center justify-between animate-fade-in">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">✓</span>
-            <span className="font-semibold text-green-800">Operation completed successfully!</span>
+    <>
+      {/* Glassmorphism-style overlay reused from Add Paddy modal */}
+      <div
+        onClick={onClose}
+        className="fixed inset-0 backdrop-blur-sm bg-black/20 z-40 transition-all"
+      />
+
+      {/* Bottom sheet container, matching Add Paddy modal structure */}
+      <div className="fixed inset-x-0 bottom-0 z-50 animate-slide-up">
+        <div className="bg-white rounded-t-3xl shadow-2xl h-[70vh] flex flex-col border-t-4 border-green-500">
+          {/* Handle bar */}
+          <div className="flex justify-center pt-3 pb-3">
+            <div className="w-12 h-1.5 bg-green-300 rounded-full" />
           </div>
-          {lastAction && (
-            <button
-              onClick={undoLastAction}
-              className="px-3 py-1 text-sm font-semibold bg-white hover:bg-gray-100 text-green-800 rounded border border-green-500 transition-colors"
-              title="Undo last action (Rule 6: Easy reversal)"
-            >
-              ↶ Undo
-            </button>
-          )}
-        </div>
-      )}
 
-      {/* Device Selection */}
-      <div className="p-4 rounded-lg border-2 border-green-300 bg-green-50">
-        <div className="flex items-center justify-between mb-3">
-          <div className="font-bold text-black">Select Paddies to Control</div>
-          <div className="flex gap-2">
-            {/* Rule 2: Shortcuts for frequent users */}
-            <button
-              onClick={() => setSelectedDevices(new Set(devices.map(d => d.id)))}
-              className="px-3 py-1 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
-              title="Keyboard shortcut: Ctrl+A (future implementation)"
-            >
-              Select All
-            </button>
-            <button
-              onClick={() => setSelectedDevices(new Set())}
-              className="px-3 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-          {devices.map((dev) => (
-            <label
-              key={dev.id}
-              className={`flex items-center gap-2 p-3 rounded border-2 cursor-pointer transition-all ${
-                selectedDevices.has(dev.id)
-                  ? 'border-green-500 bg-white shadow-md'
-                  : 'border-gray-300 bg-white hover:border-green-400'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={selectedDevices.has(dev.id)}
-                onChange={(e) => {
-                  const next = new Set(selectedDevices);
-                  if (e.target.checked) next.add(dev.id);
-                  else next.delete(dev.id);
-                  setSelectedDevices(next);
-                }}
-                className="w-4 h-4"
-              />
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-black">{dev.paddyName || `Paddy ${dev.paddyId}`}</div>
-                <div className="text-xs text-gray-600">{dev.status?.badge || 'Unknown'}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-        {selectedDevices.size > 0 && (
-          <div className="mt-3 p-2 bg-white rounded text-sm text-black font-medium">
-            {selectedDevices.size} paddy/paddies selected
-          </div>
-        )}
-      </div>
-
-      {/* Relay Selection */}
-      <div className="p-4 rounded-lg border-2 border-blue-300 bg-blue-50">
-        <div className="flex items-center justify-between mb-3">
-          <div className="font-bold text-black">Select Relays to Control</div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSelectedRelays(new Set([0, 1, 2, 3]))}
-              className="px-3 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-            >
-              Select All
-            </button>
-            <button
-              onClick={() => setSelectedRelays(new Set())}
-              className="px-3 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-4 gap-2">
-          {[0, 1, 2, 3].map((i) => (
-            <label key={i} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-blue-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={selectedRelays.has(i)}
-                onChange={(e) => {
-                  const next = new Set(selectedRelays);
-                  if (e.target.checked) next.add(i);
-                  else next.delete(i);
-                  setSelectedRelays(next);
-                }}
-                className="w-4 h-4"
-              />
-              <span className="text-xs text-black font-medium">Relay {i + 1}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Relay Controls Grid */}
-      <div className="p-4 rounded-lg border-2 border-gray-300 bg-white">
-        <div className="font-bold text-black mb-3">Control Relays</div>
-        {selectedDevices.size === 0 && (
-          <div className="p-4 mb-3 rounded bg-yellow-50 border border-yellow-200">
-            <p className="text-sm text-yellow-800 font-medium">⚠️ Please select at least one paddy to control</p>
-          </div>
-        )}
-        {selectedRelays.size === 0 && selectedDevices.size > 0 && (
-          <div className="p-4 mb-3 rounded bg-yellow-50 border border-yellow-200">
-            <p className="text-sm text-yellow-800 font-medium">⚠️ Please select at least one relay to control</p>
-          </div>
-        )}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className={`p-4 rounded-lg border-2 flex flex-col items-center justify-center transition-all ${
-                selectedRelays.has(i) && selectedDevices.size > 0
-                  ? relayStates[i]
-                    ? 'border-red-400 bg-red-100'
-                    : 'border-green-400 bg-green-100'
-                  : 'border-gray-300 bg-gray-100 opacity-50'
-              }`}
-            >
-              <div className="text-sm font-bold text-black mb-2">Relay {i + 1}</div>
-              
-              {loadingRelays.has(i) && (
-                <div className="flex flex-col items-center gap-1 mb-2">
-                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                  <div className="text-xs text-blue-600 font-medium">Sending...</div>
-                </div>
-              )}
-              
-              {messages[i] && (
-                <div className="text-xs font-medium text-center text-gray-700 mb-2 line-clamp-2">
-                  {messages[i]}
-                </div>
-              )}
-
-              <div className="text-xs font-semibold text-black mb-3">
-                {loadingRelays.has(i) ? 'Wait...' : (relayStates[i] ? 'ON' : 'OFF')}
-              </div>
-
-              <button
-                onClick={() => toggleRelayForSelected(i)}
-                disabled={!selectedRelays.has(i) || loadingRelays.has(i) || selectedDevices.size === 0}
-                className={`w-full py-2 px-2 rounded-md font-bold text-xs transition-all ${
-                  !selectedRelays.has(i) || selectedDevices.size === 0
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : loadingRelays.has(i)
-                      ? 'bg-gray-400 text-white cursor-wait'
-                      : relayStates[i]
-                        ? 'bg-red-600 hover:bg-red-700 text-white'
-                        : 'bg-green-600 hover:bg-green-700 text-white'
-                }`}
-              >
-                {loadingRelays.has(i) ? '...' : (relayStates[i] ? 'Turn Off' : 'Turn On')}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Device Status Indicators */}
-      {Object.keys(deviceLoadingStates).length > 0 && (
-        <div className="p-3 rounded bg-white border-2 border-blue-200">
-          <div className="text-xs font-semibold text-black mb-2">Device Status:</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {Array.from(selectedDevices).map((deviceId) => {
-              const dev = devices.find(d => d.id === deviceId);
-              return (
-                <div key={deviceId} className="flex items-center gap-2 text-xs p-2 rounded bg-gray-50 border border-gray-200">
-                  {deviceLoadingStates[deviceId] ? (
-                    <>
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                      <span className="text-gray-700">{dev?.paddyName || 'Device'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                      <span className="text-gray-700">{dev?.paddyName || 'Device'}</span>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// RelayControlsPerDevice - Per-paddy relay control with device-level loading states
-function RelayControlsPerDevice({ deviceId, paddyName }: { deviceId: string; paddyName?: string }) {
-  const [selectedRelays, setSelectedRelays] = useState<Set<number>>(new Set([0, 1, 2, 3]));
-  const [relayStates, setRelayStates] = useState([false, false, false, false]);
-  const [loadingRelays, setLoadingRelays] = useState<Set<number>>(new Set());
-  const [messages, setMessages] = useState<Record<number, string>>({});
-
-  const toggleRelay = async (index: number) => {
-    if (loadingRelays.has(index) || !selectedRelays.has(index)) return;
-
-    const prev = [...relayStates];
-    const next = [...relayStates];
-    next[index] = !next[index];
-    
-    setRelayStates(next);
-    setLoadingRelays(prev => new Set([...prev, index]));
-    setMessages({ ...messages, [index]: 'Sending...' });
-
-    const relayNum = index + 1;
-    const action = next[index] ? 'on' : 'off';
-    try {
-      const { user } = useAuth();
-      const res = await sendDeviceCommand(deviceId, 'ESP32A', 'relay', action, { relay: relayNum }, user?.uid || '');
-
-      if (res.success) {
-        if (res.status === 'completed') {
-          setMessages({ ...messages, [index]: next[index] ? '✓ ON' : '✓ OFF' });
-        } else {
-          setMessages({ ...messages, [index]: next[index] ? '⚠ Pending' : '⚠ Pending' });
-        }
-      } else {
-        setMessages({ ...messages, [index]: '✗ Failed' });
-        setRelayStates(prev); // revert
-      }
-
-      setTimeout(() => setMessages(m => { delete m[index]; return { ...m }; }), 3000);
-    } catch (e) {
-      console.error(e);
-      setRelayStates(prev); // revert
-      setMessages({ ...messages, [index]: `✗ Failed` });
-      setTimeout(() => setMessages(m => { delete m[index]; return { ...m }; }), 3000);
-    } finally {
-      setLoadingRelays(prev => {
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      {/* Device Selection Checkboxes */}
-      <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-sm font-medium text-black">Select relays to control:</div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSelectedRelays(new Set([0, 1, 2, 3]))}
-              className="px-2 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-            >
-              All
-            </button>
-            <button
-              onClick={() => setSelectedRelays(new Set())}
-              className="px-2 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-4 gap-2">
-          {[0, 1, 2, 3].map((i) => (
-            <label key={i} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-white transition-colors">
-              <input
-                type="checkbox"
-                checked={selectedRelays.has(i)}
-                onChange={(e) => {
-                  const next = new Set(selectedRelays);
-                  if (e.target.checked) next.add(i);
-                  else next.delete(i);
-                  setSelectedRelays(next);
-                }}
-                className="w-4 h-4"
-              />
-              <span className="text-xs text-black font-medium">Relay {i + 1}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Relay Controls Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[0, 1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className={`p-3 rounded-lg border-2 flex flex-col items-center justify-center transition-all ${
-              selectedRelays.has(i)
-                ? relayStates[i]
-                  ? 'border-red-400 bg-red-50'
-                  : 'border-green-400 bg-green-50'
-                : 'border-gray-300 bg-gray-100 opacity-50'
-            }`}
-          >
-            <div className="text-sm font-bold text-black mb-2">Relay {i + 1}</div>
-            
-            {loadingRelays.has(i) && (
-              <div className="flex flex-col items-center gap-1 mb-2">
-                <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                <div className="text-xs text-blue-600 font-medium">Sending...</div>
-              </div>
-            )}
-            
-            {messages[i] && (
-              <div className="text-xs font-medium text-center text-gray-700 mb-2">
-                {messages[i]}
-              </div>
-            )}
-
-            <div className="text-xs font-semibold text-black mb-3">
-              {loadingRelays.has(i) ? 'Wait...' : (relayStates[i] ? 'ON' : 'OFF')}
-            </div>
-
-            <button
-              onClick={() => toggleRelay(i)}
-              disabled={!selectedRelays.has(i) || loadingRelays.has(i)}
-              className={`w-full py-2 px-2 rounded-md font-bold text-xs transition-all ${
-                !selectedRelays.has(i)
-                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  : loadingRelays.has(i)
-                    ? 'bg-gray-400 text-white cursor-wait'
-                    : relayStates[i]
-                      ? 'bg-red-600 hover:bg-red-700 text-white'
-                      : 'bg-green-600 hover:bg-green-700 text-white'
-              }`}
-            >
-              {loadingRelays.has(i) ? '...' : (relayStates[i] ? 'Turn Off' : 'Turn On')}
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// RelayControls component - FULLY FUNCTIONAL
-function RelayControls({ deviceId, deviceCount }: { deviceId: string; deviceCount?: number }) {
-  const [states, setStates] = useState([false, false, false, false]);
-  const [busyIndex, setBusyIndex] = useState<number | null>(null);
-  const [messages, setMessages] = useState<Record<number, string>>({});
-  const [lastAck, setLastAck] = useState<Record<number, boolean | null>>({});
-
-  const toggle = async (index: number) => {
-    if (busyIndex !== null) return;
-    const prev = [...states];
-    const next = [...states];
-    next[index] = !next[index];
-    setStates(next);
-    setBusyIndex(index);
-    setMessages({ ...messages, [index]: 'Sending...' });
-
-    const relayNum = index + 1;
-    const action = next[index] ? 'on' : 'off';
-    try {
-      const { user } = useAuth();
-      const res = await sendDeviceCommand(deviceId, 'ESP32A', 'relay', action, { relay: relayNum }, user?.uid || '');
-
-      setLastAck({ ...lastAck, [index]: res.success });
-
-      if (res.success) {
-        if (res.status === 'completed') {
-          setMessages({ ...messages, [index]: next[index] ? '✓ Relay ON' : '✓ Relay OFF' });
-        } else {
-          setMessages({ ...messages, [index]: next[index] ? '⚠ Pending' : '⚠ Pending' });
-        }
-      } else {
-        setMessages({ ...messages, [index]: '✗ Failed' });
-        setStates(prev); // revert on failure
-      }
-
-      setTimeout(() => setMessages(m => { delete m[index]; return { ...m }; }), 4000);
-    } catch (e) {
-      console.error(e);
-      setStates(prev); // revert on failure
-      setMessages({ ...messages, [index]: `✗ ${(e as Error).message || 'Failed'}` });
-      setLastAck({ ...lastAck, [index]: false });
-      setTimeout(() => setMessages(m => { delete m[index]; return { ...m }; }), 4000);
-    } finally {
-      setBusyIndex(null);
-    }
-  };
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {states.map((s, i) => (
-        <div key={i} className="p-4 rounded-xl bg-white flex flex-col justify-between border-2 border-gray-200">
+          {/* Modal header */}
+          <div className="px-5 pb-2 flex items-center justify-between">
           <div>
-            <div className="font-semibold text-black">RELAY {i + 1}</div>
-            <div className="text-sm text-black">{busyIndex === i ? 'Waiting...' : (s ? 'ON' : 'OFF')}</div>
-          </div>
-          <div className="flex flex-col gap-2 mt-3">
-            {messages[i] && <div className="text-xs font-medium text-gray-700">{messages[i]}</div>}
+              <div className="text-base font-semibold text-black">{action.label}</div>
+              <div className="text-xs text-gray-600 mt-0.5 max-w-xs">{action.description}</div>
+            </div>
             <button
-              onClick={() => toggle(i)}
-              disabled={busyIndex !== null}
-              className={`py-2 px-4 rounded-md font-medium transition-all ${
-                busyIndex === i 
-                  ? 'bg-gray-400 text-white cursor-wait' 
-                  : s 
-                    ? 'bg-red-600 hover:bg-red-700 text-white' 
-                    : 'bg-green-600 hover:bg-green-700 text-white'
+              type="button"
+              onClick={onClose}
+              className="text-xs text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-100"
+            >
+              Close
+            </button>
+          </div>
+
+          {/* Modal body */}
+          <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-3">
+          {action.requiresRelay && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-semibold text-black">Relay:</span>
+              <select
+                className="border border-gray-300 rounded-md px-2 py-1 text-xs bg-white"
+                value={relayNumber}
+                onChange={(e) => setRelayNumber(Number(e.target.value) || 1)}
+              >
+                {[1, 2, 3, 4].map((n) => (
+                  <option key={n} value={n}>{`Relay ${n}`}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="w-10 px-2 py-2 text-left">
+                    <input
+                      type="checkbox"
+                      className="w-3 h-3"
+                      checked={anySelected && devices.every((d) => selected[d.id])}
+                      onChange={(e) => {
+                        const next: Record<string, boolean> = {};
+                        devices.forEach((d) => {
+                          next[d.id] = e.target.checked;
+                        });
+                        setSelected(next);
+                      }}
+                    />
+                  </th>
+                  <th className="px-2 py-2 text-left font-semibold text-gray-700">Device</th>
+                  <th className="px-2 py-2 text-left font-semibold text-gray-700">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {devices.map((d) => {
+                  const row = results[d.id];
+                  return (
+                    <tr key={d.id} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-2 py-1.5 align-top">
+                        <input
+                          type="checkbox"
+                          className="w-3 h-3 mt-0.5"
+                          checked={!!selected[d.id]}
+                          onChange={() => handleToggleDevice(d.id)}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 align-top">
+                        <div className="text-xs font-semibold text-black">{d.label}</div>
+                        <div className="text-[11px] text-gray-500 font-mono break-all">{d.id}</div>
+                      </td>
+                      <td className="px-2 py-1.5 align-top">
+                        {!row && <span className="text-[11px] text-gray-400">Waiting…</span>}
+                        {row && row.status === 'running' && (
+                          <span className="text-[11px] text-blue-600 flex items-center gap-1">
+                            <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                            Running…
+                          </span>
+                        )}
+                        {row && row.status === 'success' && (
+                          <span className="text-[11px] text-green-700">{row.message}</span>
+                        )}
+                        {row && row.status === 'error' && (
+                          <span className="text-[11px] text-red-600">{row.message}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-gray-200 flex items-center justify-between">
+          <div className="text-[11px] text-gray-600">
+            {anySelected ? `${devices.filter((d) => selected[d.id]).length} device(s) selected` : 'No devices selected'}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleRun}
+              disabled={!anySelected || isRunning}
+              className={`px-3 py-1.5 text-xs rounded-md font-semibold text-white flex items-center gap-1 ${
+                !anySelected || isRunning
+                  ? 'bg-emerald-300 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
-              {busyIndex === i ? '⏳ Sending...' : (s ? 'Turn Off' : 'Turn On')}
+              {isRunning && (
+                <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              )}
+              <span>{isRunning ? 'Running…' : 'Run command'}</span>
             </button>
           </div>
         </div>
-      ))}
-    </div>
+      </div>
+    </>
   );
 }
 

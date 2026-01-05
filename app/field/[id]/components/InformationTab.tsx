@@ -372,8 +372,8 @@ export function InformationTab({ field, onFieldUpdate }: InformationTabProps) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-md p-6">
+    <div className="space-y-6 -mx-1 sm:mx-0">
+      <div className="bg-white rounded-xl shadow-md p-4 sm:p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">Field Information</h2>
           {fieldStatus !== 'active' && (
@@ -491,7 +491,7 @@ export function InformationTab({ field, onFieldUpdate }: InformationTabProps) {
       </div>
 
       {fieldStatus === 'active' && (
-        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-orange-200 rounded-xl p-6">
+        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-orange-200 rounded-xl p-4 sm:p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-2">
             {isCompleted ? '🌾 Ready for Harvest' : '⏸️ End Season Early'}
           </h3>
@@ -515,7 +515,7 @@ export function InformationTab({ field, onFieldUpdate }: InformationTabProps) {
       )}
 
       {fieldStatus !== 'active' && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-6">
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 sm:p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-2">
             Field is {fieldStatus === 'harvested' ? 'Harvested' : 'Concluded'}
           </h3>
@@ -532,7 +532,7 @@ export function InformationTab({ field, onFieldUpdate }: InformationTabProps) {
         </div>
       )}
 
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 sm:p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-2">
           🗺️ Field Boundary
         </h3>
@@ -560,7 +560,7 @@ export function InformationTab({ field, onFieldUpdate }: InformationTabProps) {
         </div>
       </div>
 
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4 sm:p-6">
         <h3 className="text-lg font-semibold text-red-900 mb-2">
           🗑️ Delete Field
         </h3>

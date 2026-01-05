@@ -110,7 +110,7 @@ export default function RiceVarietiesPage() {
       <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50">
         {/* Navigation Bar */}
         <nav className="bg-gradient-to-r from-green-500 via-emerald-500 to-teal-500 sticky top-0 z-50 shadow-lg">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
               <div className="flex items-center gap-3">
                 <div className="relative">
@@ -144,7 +144,7 @@ export default function RiceVarietiesPage() {
         </nav>
 
         {/* Main Content */}
-        <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 ui-container">
+        <main id="main-content" className="w-full px-2 sm:px-4 lg:px-8 py-8">
           <Banner
             variant="gradient"
             title="Rice Varieties"
