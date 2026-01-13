@@ -4,6 +4,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 
 /**
@@ -15,7 +16,7 @@ import * as admin from 'firebase-admin';
  * - Stores in Firestore device logs
  * - Optionally aggregates for field statistics
  */
-export const logSensorData = functions.database
+export const logSensorData = regionalFunctions.database
   .ref('/devices/{deviceId}/npk')
   .onWrite(async (change, context) => {
     const deviceId = context.params.deviceId;

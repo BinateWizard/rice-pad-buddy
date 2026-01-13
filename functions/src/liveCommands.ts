@@ -4,6 +4,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 
 const COMMAND_TIMEOUT = 30 * 1000; // 30 seconds
@@ -19,7 +20,7 @@ const COMMAND_TIMEOUT = 30 * 1000; // 30 seconds
  * 
  * Handles both relay commands (relay1-4) and motor/GPS commands
  */
-export const verifyLiveCommand = functions.database
+export const verifyLiveCommand = regionalFunctions.database
   .ref('/devices/{deviceId}/commands/{nodeId}/{commandType}')
   .onWrite(async (change, context) => {
     const deviceId = context.params.deviceId;

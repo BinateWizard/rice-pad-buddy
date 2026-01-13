@@ -4,6 +4,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 
 /**
@@ -16,7 +17,7 @@ import * as admin from 'firebase-admin';
  * - Notifies owner
  * - Sets up RTDB structure
  */
-export const registerDevice = functions.firestore
+export const registerDevice = regionalFunctions.firestore
   .document('devices/{deviceDocId}')
   .onCreate(async (snapshot, context) => {
     const deviceDocId = context.params.deviceDocId;

@@ -9,6 +9,7 @@
  */
 
 import * as functions from "firebase-functions";
+const regionalFunctions = functions.region("us-central1");
 import * as admin from "firebase-admin";
 
 const HEARTBEAT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -19,7 +20,7 @@ const HEARTBEAT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
  * 
  * Detects when devices go offline/online in real-time
  */
-export const monitorHeartbeat = functions.database
+export const monitorHeartbeat = regionalFunctions.database
   .ref('/devices/{deviceId}/heartbeat')
   .onUpdate(async (change, context) => {
     const deviceId = context.params.deviceId;

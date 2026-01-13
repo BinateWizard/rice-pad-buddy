@@ -4,6 +4,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 
 /**
@@ -49,7 +50,7 @@ function calculatePolygonArea(points: Array<{ lat: number; lng: number }>): numb
  * - Stores area in field document
  * - Triggers NPK recommendation update
  */
-export const calculateFieldArea = functions.firestore
+export const calculateFieldArea = regionalFunctions.firestore
   .document('fields/{fieldId}')
   .onWrite(async (change, context) => {
     const fieldId = context.params.fieldId;

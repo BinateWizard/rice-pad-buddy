@@ -11,6 +11,7 @@
  */
 
 import * as functions from "firebase-functions";
+const regionalFunctions = functions.region("us-central1");
 import * as admin from "firebase-admin";
 
 export interface ScheduledCommand {

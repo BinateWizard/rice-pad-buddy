@@ -1,4 +1,7 @@
 import * as functions from "firebase-functions";
+
+// Always use us-central1 region for all functions
+const regionalFunctions = functions.region("us-central1");
 import * as admin from "firebase-admin";
 
 // Initialize Firebase Admin explicitly with RTDB URL for reliability
@@ -74,7 +77,7 @@ export {
  * 
  * Checks readings against thresholds and creates alerts if out of range
  */
-export const realtimeAlertProcessor = functions.firestore
+export const realtimeAlertProcessor = regionalFunctions.firestore
   .document('fields/{fieldId}/paddies/{paddyId}/logs/{logId}')
   .onCreate(async (snap, context) => {
     const firestore = admin.firestore();
@@ -267,7 +270,7 @@ export const realtimeAlertProcessor = functions.firestore
  * Creates offline alerts if device hasn't sent heartbeat in > 10 minutes
  * Updates device status in Firestore
  */
-export const deviceHealthMonitor = functions.pubsub
+export const deviceHealthMonitor = regionalFunctions.pubsub
   .schedule('*/2 * * * *') // Every 2 minutes
   .timeZone('Asia/Manila')
   .onRun(async (context) => {
@@ -423,7 +426,7 @@ export const deviceHealthMonitor = functions.pubsub
  * 
  * Triggered when commands are sent to devices
  */
-export const commandAuditLogger = functions.database
+export const commandAuditLogger = regionalFunctions.database
   .ref('devices/{deviceId}/commands/{nodeId}')
   .onWrite(async (change, context) => {
     const firestore = admin.firestore();
@@ -470,7 +473,7 @@ export const commandAuditLogger = functions.database
  * 
  * Runs daily at 2 AM - removes alerts older than 90 days
  */
-export const alertCleanupScheduler = functions.pubsub
+export const alertCleanupScheduler = regionalFunctions.pubsub
   .schedule('0 2 * * *') // Daily at 2 AM
   .timeZone('Asia/Manila')
   .onRun(async (context) => {
@@ -517,7 +520,7 @@ export const alertCleanupScheduler = functions.pubsub
   });
 
 // Basic test endpoint remains
-export const helloWorld = functions.https.onRequest((request, response) => {
+export const helloWorld = regionalFunctions.https.onRequest((request, response) => {
   response.send("Hello from PadBuddy Cloud Functions!");
 });
 
@@ -531,7 +534,7 @@ export const helloWorld = functions.https.onRequest((request, response) => {
  * const sendCommand = httpsCallable(functions, 'sendDeviceCommand');
  * await sendCommand({ deviceId, nodeId, role, action, params });
  */
-export const sendDeviceCommand = functions.https.onCall(async (data, context) => {
+export const sendDeviceCommand = regionalFunctions.https.onCall(async (data, context) => {
   // Verify authentication
   if (!context.auth) {
     throw new functions.https.HttpsError(
@@ -677,7 +680,7 @@ export const sendDeviceCommand = functions.https.onCall(async (data, context) =>
  * Listens for ESP32 to update command status to "completed"
  * Logs completion to Firestore for analytics
  */
-export const onCommandComplete = functions.database
+export const onCommandComplete = regionalFunctions.database
   .ref('/devices/{deviceId}/commands/{nodeId}')
   .onUpdate(async (change, context) => {
     const { deviceId, nodeId } = context.params;
@@ -716,7 +719,7 @@ export const onCommandComplete = functions.database
  * Requires admin authentication to call
  * Deletes all users, fields, paddies, logs, notifications, and FCM tokens
  */
-export const cleanupAllUserData = functions.https.onCall(async (data, context) => {
+export const cleanupAllUserData = regionalFunctions.https.onCall(async (data, context) => {
   // Verify user is authenticated
   if (!context.auth) {
     throw new functions.https.HttpsError(

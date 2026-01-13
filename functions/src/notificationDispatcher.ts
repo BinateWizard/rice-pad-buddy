@@ -4,6 +4,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 import * as nodemailer from 'nodemailer';
 
@@ -37,7 +38,7 @@ function getEmailTransporter() {
  * - Updates notification with sent status
  * - Optionally logs to device logs
  */
-export const dispatchNotification = functions.firestore
+export const dispatchNotification = regionalFunctions.firestore
   .document('users/{userId}/notifications')
   .onCreate(async (snapshot, context) => {
     const userId = context.params.userId;

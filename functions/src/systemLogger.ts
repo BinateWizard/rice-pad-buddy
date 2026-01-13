@@ -132,8 +132,8 @@ export async function logCritical(
  * Runs daily to remove logs older than 30 days
  */
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 
-export const cleanupSystemLogs = functions.pubsub
   .schedule('0 2 * * *')  // Daily at 2 AM
   .timeZone('Asia/Manila')
   .onRun(async (context) => {

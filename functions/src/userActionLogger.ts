@@ -7,6 +7,8 @@
  */
 
 import * as functions from "firebase-functions";
+
+const regionalFunctions = functions.region("us-central1");
 import * as admin from "firebase-admin";
 
 export interface UserAction {
@@ -22,7 +24,7 @@ export interface UserAction {
  * Client calls this function with action details
  * Function writes to actions/{userId}/userActions with server timestamp
  */
-export const logUserAction = functions.https.onCall(async (data: UserAction, context) => {
+export const logUserAction = regionalFunctions.https.onCall(async (data: UserAction, context) => {
   // Verify authentication
   if (!context.auth) {
     throw new functions.https.HttpsError(
@@ -93,7 +95,7 @@ export const logUserAction = functions.https.onCall(async (data: UserAction, con
  * Client calls this function to test push notifications
  * Function creates a notification document which triggers dispatchNotification
  */
-export const sendTestNotification = functions.https.onCall(async (data, context) => {
+export const sendTestNotification = regionalFunctions.https.onCall(async (data, context) => {
   // Verify authentication
   if (!context.auth) {
     throw new functions.https.HttpsError(

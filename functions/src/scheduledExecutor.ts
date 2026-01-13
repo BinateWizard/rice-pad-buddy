@@ -4,6 +4,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 
 /**
@@ -16,7 +17,7 @@ import * as admin from 'firebase-admin';
  * - Updates schedule status
  * - Logs execution result
  */
-export const executeScheduledCommand = functions.firestore
+export const executeScheduledCommand = regionalFunctions.firestore
   .document('devices/{deviceDocId}/schedules/{scheduleId}')
   .onWrite(async (change, context) => {
     const deviceDocId = context.params.deviceDocId;

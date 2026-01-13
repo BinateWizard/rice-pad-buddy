@@ -7,6 +7,7 @@
  */
 
 import * as functions from 'firebase-functions';
+const regionalFunctions = functions.region("us-central1");
 import * as admin from 'firebase-admin';
 
 export interface DeviceAction {
@@ -30,7 +31,7 @@ export interface DeviceAction {
  * 
  * Note: onCall functions handle CORS automatically
  */
-export const logDeviceAction = functions.https.onCall(async (data: DeviceAction, context) => {
+export const logDeviceAction = regionalFunctions.https.onCall(async (data: DeviceAction, context) => {
   // Verify authentication
   if (!context.auth) {
     throw new functions.https.HttpsError(
