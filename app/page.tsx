@@ -1,6 +1,7 @@
 'use client';
 
 import ProtectedRoute from "@/components/ProtectedRoute";
+import { BoundaryMappingModal } from "./device/[id]/components/BoundaryMappingModal";
 import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
 import { useState, useEffect } from "react";
@@ -22,6 +23,15 @@ import { usePageVisibility } from "@/lib/hooks/usePageVisibility";
 const ADMIN_EMAIL = 'ricepaddy.contact@gmail.com';
 
 export default function Home() {
+    // Field boundary mapping state
+    const [fieldBoundaries, setFieldBoundaries] = useState<Array<{lat: number, lng: number}>>([]);
+    const [isFieldBoundaryModalOpen, setIsFieldBoundaryModalOpen] = useState(false);
+    const handleOpenFieldBoundaryModal = () => setIsFieldBoundaryModalOpen(true);
+    const handleSaveFieldBoundary = (points: Array<{lat: number, lng: number}>) => {
+      setFieldBoundaries(points);
+      setIsFieldBoundaryModalOpen(false);
+      setErrors(prev => ({...prev, fieldBoundaries: ""}));
+    };
   const { user, signOut, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -42,12 +52,16 @@ export default function Home() {
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   
   // Step 2 form data
+    // Boundary modal state and handler
+    const [isBoundaryModalOpen, setIsBoundaryModalOpen] = useState(false);
+    const handleOpenBoundaryModal = () => setIsBoundaryModalOpen(true);
   const [paddyName, setPaddyName] = useState("");
   const [paddyDescription, setPaddyDescription] = useState("");
-  const [paddyShapeType, setPaddyShapeType] = useState<"rectangle" | "trapezoid">("rectangle");
+  const [paddyShapeType, setPaddyShapeType] = useState<"rectangle" | "trapezoid" | "polygon">("rectangle");
   const [paddyLength, setPaddyLength] = useState("");
   const [paddyWidth, setPaddyWidth] = useState("");
   const [paddyWidth2, setPaddyWidth2] = useState(""); // For trapezoid
+  const [paddyCoordinates, setPaddyCoordinates] = useState<Array<{lat: number, lng: number}>>([]); // For polygon mapping
   const [deviceId, setDeviceId] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   
@@ -55,6 +69,7 @@ export default function Home() {
   const [fields, setFields] = useState<any[]>([]);
   const [loadingFields, setLoadingFields] = useState(true);
   
+
   // Dashboard stats
   const [stats, setStats] = useState({
     totalFields: 0,
@@ -62,6 +77,19 @@ export default function Home() {
     healthyDevices: 0,
     issueDevices: 0
   });
+
+  // Prevent background scroll when modal is open
+  useEffect(() => {
+    if (isModalOpen) {
+      document.body.classList.add('overflow-hidden');
+    } else {
+      document.body.classList.remove('overflow-hidden');
+    }
+    // Clean up in case modal is closed by navigation or unmount
+    return () => {
+      document.body.classList.remove('overflow-hidden');
+    };
+  }, [isModalOpen]);
   
   const handleStep1Submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,22 +250,23 @@ export default function Home() {
     const newErrors: {[key: string]: string} = {};
     
     if (!paddyName.trim()) newErrors.paddyName = "Please enter a paddy name";
-    if (!deviceId.trim()) {
-      newErrors.deviceId = "Please enter a device ID";
-    } else {
+    // Device ID is now optional
+    if (deviceId.trim()) {
       // Validate format: DEVICE_XXXX
       const deviceIdPattern = /^DEVICE_\d{4}$/;
       if (!deviceIdPattern.test(deviceId)) {
         newErrors.deviceId = "Invalid format. Use DEVICE_0001 format";
       }
     }
-    
+    // Mapping validation: require mapping info
+    if (paddyShapeType === "polygon" && paddyCoordinates.length < 3) {
+      newErrors.paddyCoordinates = "Please provide at least 3 coordinates for polygon mapping.";
+    }
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       return;
     }
-    
-     await createFieldWithDevice();
+    await createFieldWithDevice();
   };
 
   const createFieldWithDevice = async () => {
@@ -282,36 +311,43 @@ export default function Home() {
         updatedAt: serverTimestamp()
       }, { merge: true });
       
-      // 2. Create field document
-      const fieldsRef = collection(db, "users", user.uid, "fields");
-      const fieldDoc = await addDoc(fieldsRef, {
-        fieldName,
-        description: fieldDescription,
-        riceVariety,
-        plantingMethod,
-        startDay,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-      
-      // 3. Create paddy (device connection) under the field
-      const paddiesRef = collection(db, "users", user.uid, "fields", fieldDoc.id, "paddies");
+      // 2. Create field document in top-level 'fields' collection with slug as ID
+      const slug = fieldName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '')
+        .substring(0, 32) + '-' + Math.random().toString(36).substring(2, 7);
+      const fieldsRef = collection(db, "fields");
+      const fieldDocRef = doc(fieldsRef, slug);
       const areaM2 = calculatePaddyArea();
       const areaHectares = areaM2 ? areaM2 / 10000 : null;
-      
-      await addDoc(paddiesRef, {
-        paddyName,
+      const paddyObj: any = {
+        coords: paddyCoordinates,
+        deviceId: deviceId || null,
         description: paddyDescription,
-        deviceId,
         shapeType: paddyShapeType,
         length: paddyLength ? parseFloat(paddyLength) : null,
         width: paddyWidth ? parseFloat(paddyWidth) : null,
         width2: paddyShapeType === "trapezoid" && paddyWidth2 ? parseFloat(paddyWidth2) : null,
-        areaM2: areaM2,
-        areaHectares: areaHectares,
-        connectedAt: serverTimestamp(),
-        status: "connected"
-      });
+        areaM2,
+        areaHectares,
+        createdAt: serverTimestamp(),
+        status: deviceId ? "connected" : "unconnected"
+      };
+      const fieldData = {
+        fieldName,
+        ownerName: user.displayName || "",
+        ownerEmail: user.email || "",
+        ownerUid: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        riceVariety,
+        plantingMethod,
+        startDay,
+        description: fieldDescription,
+        [paddyName]: paddyObj // dynamic key for paddyName
+      };
+      await setDoc(fieldDocRef, fieldData);
       
       // 4. Update device in RTDB to mark it as connected to this user
       const deviceRef = ref(database, `devices/${deviceId}`);
@@ -319,7 +355,7 @@ export default function Home() {
         ownedBy: user.uid,
         connectedTo: user.uid,
         connectedAt: new Date().toISOString(),
-        fieldId: fieldDoc.id,
+        fieldId: fieldDocRef.id,
         paddyName,
         status: 'connected'
       });
@@ -688,6 +724,45 @@ export default function Home() {
                   >
                     <h2 className="text-2xl font-bold text-gray-900 mb-6">Add New Field</h2>
                     <form onSubmit={handleStep1Submit} className="space-y-5">
+                            <button
+                              type="button"
+                              className="bg-gray-50 border rounded-lg px-4 py-3 flex items-center gap-2 text-gray-700 mt-2 hover:bg-green-50 focus:outline-none"
+                              onClick={handleOpenFieldBoundaryModal}
+                            >
+                              <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                              {fieldBoundaries.length > 0
+                                ? `${fieldBoundaries.length} field boundary points set`
+                                : "Set field boundary (up to 25 points)"}
+                            </button>
+                            {errors.fieldBoundaries && (
+                              <div className="text-red-500 text-xs mt-1">{errors.fieldBoundaries}</div>
+                            )}
+                              {/* Field Boundary Mapping Modal overlays everything, only the map and its controls, no modal UI */}
+                              {isFieldBoundaryModalOpen && (
+                                <div className="fixed inset-0 z-[9999] w-screen h-screen bg-white p-0 m-0 border-none rounded-none">
+                                  {/* Remove all modal header, border, and padding. Only render the map modal content. */}
+                                  <div className="absolute inset-0 w-full h-full">
+                                    <BoundaryMappingModal
+                                      show={true}
+                                      polygonCoords={fieldBoundaries}
+                                      mapCenter={fieldBoundaries[0] || { lat: 14.5995, lng: 120.9842 }}
+                                      isSavingBoundary={false}
+                                      pointAddedNotification={false}
+                                      hasSavedBoundary={fieldBoundaries.length > 0}
+                                      onClose={() => setIsFieldBoundaryModalOpen(false)}
+                                      onAddPoint={(lat: number, lng: number) => setFieldBoundaries(prev => [...prev, { lat, lng }])}
+                                      onRemovePoint={(idx: number) => setFieldBoundaries(prev => prev.filter((_, i) => i !== idx))}
+                                      onRemoveLastPoint={() => setFieldBoundaries(prev => prev.slice(0, -1))}
+                                      onClearPolygon={() => setFieldBoundaries([])}
+                                      onSaveBoundary={async () => { handleSaveFieldBoundary(fieldBoundaries); }}
+                                      calculatePolygonArea={() => 0}
+                                    />
+                                  </div>
+                                </div>
+                              )}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Field Name
@@ -849,7 +924,7 @@ export default function Home() {
                       Back
                     </button>
                     
-                    <h2 className="text-2xl font-bold text-gray-900 mb-6">Connect Device</h2>
+                    <h2 className="text-2xl font-bold text-gray-900 mb-6">Add Paddy</h2>
                     <form onSubmit={handleStep2Submit} className="space-y-5">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -902,97 +977,23 @@ export default function Home() {
                           </p>
                         )}
                       </div>
-
-                      {/* Paddy Dimensions */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Field Shape
-                        </label>
-                        <select
-                          value={paddyShapeType}
-                          onChange={(e) => setPaddyShapeType(e.target.value as "rectangle" | "trapezoid")}
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900 mb-3"
-                        >
-                          <option value="rectangle">Rectangle</option>
-                          <option value="trapezoid">Trapezoid (varying width)</option>
-                        </select>
-                        <p className="text-xs text-gray-500 mb-4">
-                          {paddyShapeType === "rectangle" 
-                            ? "For rectangular fields with uniform width"
-                            : "For fields where one end is wider than the other"}
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-3">
-                          Paddy Dimensions (for NPK calculation)
-                        </label>
-                        <div className="grid grid-cols-2 gap-3 mb-3">
-                          <div>
-                            <label className="block text-xs text-gray-600 mb-1">Length (m)</label>
-                            <input
-                              type="number"
-                              value={paddyLength}
-                              onChange={(e) => setPaddyLength(e.target.value)}
-                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900"
-                              placeholder="e.g., 50"
-                              step="0.1"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-600 mb-1">
-                              {paddyShapeType === "rectangle" ? "Width (m)" : "Width 1 (m)"}
-                            </label>
-                            <input
-                              type="number"
-                              value={paddyWidth}
-                              onChange={(e) => setPaddyWidth(e.target.value)}
-                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900"
-                              placeholder="e.g., 40"
-                              step="0.1"
-                            />
-                          </div>
-                        </div>
-                        
-                        {paddyShapeType === "trapezoid" && (
-                          <div className="mb-3">
-                            <label className="block text-xs text-gray-600 mb-1">Width 2 (m)</label>
-                            <input
-                              type="number"
-                              value={paddyWidth2}
-                              onChange={(e) => setPaddyWidth2(e.target.value)}
-                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white text-gray-900"
-                              placeholder="e.g., 45"
-                              step="0.1"
-                            />
-                            <p className="text-xs text-gray-500 mt-1">Width at the other end of the field</p>
-                          </div>
-                        )}
-                        
-                        {calculatePaddyArea() && (
-                          <div className="mt-3 space-y-1.5 p-3 bg-green-50 rounded-lg border border-green-200">
-                            <p className="text-sm text-green-700 font-medium">
-                              📐 Area: {calculatePaddyArea()?.toFixed(2)} m²
-                            </p>
-                            <p className="text-sm text-emerald-700 font-medium">
-                              🌾 Hectares: {((calculatePaddyArea() || 0) / 10000).toFixed(4)} ha
-                            </p>
-                          </div>
-                        )}
-                        <p className="text-xs text-gray-500 mt-2">
-                          Enter the dimensions of your paddy field to help calculate NPK fertilizer requirements.
-                        </p>
-                      </div>
                       
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                        <p className="text-sm text-gray-600 flex items-center gap-2">
-                          <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          Location pin (coming soon)
-                        </p>
-                      </div>
+                      <button
+                        type="button"
+                        className="bg-gray-50 border rounded-lg px-4 py-3 flex items-center gap-2 text-gray-700 mt-2 hover:bg-green-50 focus:outline-none"
+                        onClick={() => router.push('/device/boundary-map')}
+                      >
+                        <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        {paddyCoordinates.length > 0
+                          ? `${paddyCoordinates.length} boundary points set`
+                          : "Set boundary (up to 25 points)"}
+                      </button>
+                      {errors.paddyCoordinates && (
+                        <div className="text-red-500 text-xs mt-1">{errors.paddyCoordinates}</div>
+                      )}
                       
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1021,7 +1022,7 @@ export default function Home() {
                             Connecting...
                           </>
                         ) : (
-                          'Connect Device'
+                          'Add Paddy'
                         )}
                       </button>
 
